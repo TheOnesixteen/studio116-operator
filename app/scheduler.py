@@ -22,18 +22,32 @@ def run_next(task_id: str | None = None) -> dict:
             transition_task(task["id"], "running", message="Task running under scheduler-owned lock")
 
             if task["type"] == "health_check":
-                ok, summary = run_health_check(task["id"], run_id)
+                health_result = run_health_check(task["id"], run_id)
             else:
-                ok, summary = False, f"Unsupported Phase 1 task type: {task['type']}"
+                health_result = {
+                    "overall_status": "failed",
+                    "task_succeeded": False,
+                    "summary": f"Unsupported Phase 1 task type: {task['type']}",
+                    "key_findings": [f"Unsupported Phase 1 task type: {task['type']}"],
+                }
 
             transition_task(task["id"], "review", message="Task moved to review after execution")
-            if ok:
-                transition_task(task["id"], "done", message=summary)
-                finish_run(run_id, task_id=task["id"], status="done", exit_code=0, summary=summary)
+            if health_result["task_succeeded"]:
+                transition_task(task["id"], "done", message=health_result["summary"])
+                finish_run(run_id, task_id=task["id"], status="done", exit_code=0, summary=health_result["summary"])
             else:
-                transition_task(task["id"], "failed", message=summary)
-                finish_run(run_id, task_id=task["id"], status="failed", exit_code=1, summary=summary)
-            return {"ran": True, "task_id": task["id"], "run_id": run_id, "ok": ok, "summary": summary}
+                transition_task(task["id"], "failed", message=health_result["summary"])
+                finish_run(run_id, task_id=task["id"], status="failed", exit_code=1, summary=health_result["summary"])
+            return {
+                "overall_status": health_result["overall_status"],
+                "summary": health_result["summary"],
+                "key_findings": health_result["key_findings"],
+                "task_succeeded": health_result["task_succeeded"],
+                "ran": True,
+                "ok": health_result["task_succeeded"],
+                "task_id": task["id"],
+                "run_id": run_id,
+            }
         except Exception as exc:
             if run_id:
                 finish_run(run_id, task_id=task["id"], status="failed", exit_code=1, summary=str(exc))

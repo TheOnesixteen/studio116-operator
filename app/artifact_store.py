@@ -23,7 +23,7 @@ def write_json_artifact(
     task_dir = settings.artifacts_dir / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     path = task_dir / f"{run_id}-{artifact_type}.json"
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     with transaction() as conn:
         conn.execute(
             """

@@ -7,6 +7,7 @@ from typing import Any
 from app.artifact_store import write_json_artifact
 from app.db import transaction
 from app.events import record_event, utc_now
+from app.models import HEALTH_STATUSES
 from app.state_manager import assert_transition, validate_status
 from tools.caddy_tools import inspect_caddy
 from tools.docker_tools import inspect_docker_health
@@ -24,7 +25,7 @@ def create_task(
     goal: str,
     task_type: str | None = None,
     priority: str = "medium",
-    requested_by: str = "rusty",
+    requested_by: str = "Rusty",
     constraints: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
@@ -203,7 +204,56 @@ def record_worker_execution(run_id: str, worker_name: str, result) -> None:
         )
 
 
-def run_health_check(task_id: str, run_id: str) -> tuple[bool, str]:
+def _classify_check(label: str, result) -> tuple[str, str]:
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    combined = f"{stdout}\n{stderr}".lower()
+
+    if result.timed_out:
+        return "failed", f"{label}: command timed out"
+    if result.exit_code == 127:
+        return "failed", f"{label}: command unavailable"
+
+    if result.command.startswith("systemctl is-active"):
+        state = stdout.splitlines()[0].strip().lower() if stdout else "unknown"
+        if result.exit_code == 0 and state == "active":
+            return "ok", f"{label}: service is active"
+        if state in {"activating", "reloading", "deactivating"}:
+            return "warning", f"{label}: service is {state}"
+        return "failed", f"{label}: service is {state}"
+
+    if result.command.startswith("systemctl status"):
+        if result.exit_code != 0:
+            return "failed", f"{label}: service status check failed"
+        if "degraded" in combined or "reloading" in combined:
+            return "warning", f"{label}: service status includes warnings"
+        return "ok", f"{label}: service status is readable"
+
+    if result.command.startswith("docker ps"):
+        if result.exit_code != 0:
+            return "failed", f"{label}: Docker inspection failed"
+        rows = [line for line in stdout.splitlines() if line.strip()]
+        if len(rows) <= 1:
+            return "warning", f"{label}: Docker inspection completed, but no containers were listed"
+        unhealthy_markers = ("unhealthy", "restarting", "dead", "exited")
+        if any(marker in combined for marker in unhealthy_markers):
+            return "failed", f"{label}: Docker reports unhealthy container state"
+        return "ok", f"{label}: Docker containers are listed without unhealthy state"
+
+    if result.exit_code == 0:
+        return "ok", f"{label}: command completed"
+    return "failed", f"{label}: command failed with exit code {result.exit_code}"
+
+
+def _health_summary(overall_status: str, key_findings: list[str]) -> str:
+    if overall_status == "ok":
+        return "Health check completed: all findings are healthy"
+    if overall_status == "warning":
+        return "Health check completed: warnings found, no hard failures"
+    return "Health check failed: inspection could not complete correctly or a required check failed"
+
+
+def run_health_check(task_id: str, run_id: str) -> dict[str, Any]:
     checks = []
     for label, results in (
         ("caddy", inspect_caddy()),
@@ -212,9 +262,14 @@ def run_health_check(task_id: str, run_id: str) -> tuple[bool, str]:
     ):
         for result in results:
             record_worker_execution(run_id, "shell_ops", result)
+            status, finding = _classify_check(label, result)
+            if status not in HEALTH_STATUSES:
+                raise ValueError(f"Unknown health status: {status}")
             checks.append(
                 {
                     "label": label,
+                    "status": status,
+                    "finding": finding,
                     "command": result.command,
                     "exit_code": result.exit_code,
                     "timed_out": result.timed_out,
@@ -222,14 +277,36 @@ def run_health_check(task_id: str, run_id: str) -> tuple[bool, str]:
                     "stderr": result.stderr,
                 }
             )
-    ok = all(check["exit_code"] == 0 for check in checks)
-    summary = "Health check passed" if ok else "Health check completed with warnings or failures"
+    key_findings = [check["finding"] for check in checks if check["status"] in {"warning", "failed"}]
+    if not key_findings:
+        key_findings = [check["finding"] for check in checks]
+
+    if any(check["status"] == "failed" for check in checks):
+        overall_status = "failed"
+    elif any(check["status"] == "warning" for check in checks):
+        overall_status = "warning"
+    else:
+        overall_status = "ok"
+
+    task_succeeded = overall_status in {"ok", "warning"}
+    summary = _health_summary(overall_status, key_findings)
     artifact_path = write_json_artifact(
         task_id=task_id,
         run_id=run_id,
         artifact_type="health_check",
         label=HEALTH_CHECK_TITLE,
-        data={"ok": ok, "summary": summary, "checks": checks},
+        data={
+            "overall_status": overall_status,
+            "summary": summary,
+            "key_findings": key_findings,
+            "task_succeeded": task_succeeded,
+            "checks": checks,
+        },
     )
     record_event("artifact_created", f"Wrote health-check artifact: {artifact_path}", task_id=task_id, run_id=run_id)
-    return ok, summary
+    return {
+        "overall_status": overall_status,
+        "task_succeeded": task_succeeded,
+        "summary": summary,
+        "key_findings": key_findings,
+    }

@@ -6,6 +6,8 @@ import sys
 
 from app.config import get_settings
 from app.db import init_db
+from app.locks import active_locks
+from app.models import TASK_STATES
 from app.router import create_health_check_task
 from app.scheduler import run_next
 from app.task_engine import create_task, list_tasks, show_task
@@ -25,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--title", required=True)
     create.add_argument("--goal", required=True)
     create.add_argument("--priority", default="medium")
+    create.add_argument("--requested-by", default="Rusty")
 
     show = task_subparsers.add_parser("show")
     show.add_argument("task_id")
@@ -41,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     logs = subparsers.add_parser("logs")
     logs_subparsers = logs.add_subparsers(dest="logs_command", required=True)
-    tail = logs_subparsers.add_parser("tail")
+    tail = logs_subparsers.add_parser("tail", description="Tail Operator/runtime logs only in Phase 1.")
     tail.add_argument("--lines", type=int, default=50)
 
     health = subparsers.add_parser("health")
@@ -68,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
                 title=args.title,
                 goal=args.goal,
                 priority=args.priority,
+                requested_by=args.requested_by,
             )
             print(task_id)
             return 0
@@ -83,25 +87,40 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "run" and args.run_command == "next":
             result = run_next()
-            print(json.dumps(result, indent=2, sort_keys=True))
+            print(json.dumps(result, indent=2))
             return 0 if result.get("ok", True) else 1
 
         if args.command == "status":
             tasks = list_tasks()
-            counts: dict[str, int] = {}
+            counts: dict[str, int] = {status: 0 for status in TASK_STATES}
             for task in tasks:
                 counts[task["status"]] = counts.get(task["status"], 0) + 1
-            print(json.dumps({"db": str(get_settings().db_path), "task_counts": counts}, indent=2, sort_keys=True))
+            settings = get_settings()
+            locks = active_locks()
+            print(
+                json.dumps(
+                    {
+                        "db": str(settings.db_path),
+                        "operator_runtime_log": str(settings.operator_log_path),
+                        "task_counts": counts,
+                        "active_lock_count": len(locks),
+                        "active_locks": locks,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return 0
 
         if args.command == "logs" and args.logs_command == "tail":
+            print(f"Operator/runtime log only (Phase 1): {get_settings().operator_log_path}")
             print(tail_operator_log(args.lines, get_settings().operator_log_path))
             return 0
 
         if args.command == "health" and args.health_command == "check":
             task_id = create_health_check_task()
             result = run_next(task_id)
-            print(json.dumps(result, indent=2, sort_keys=True))
+            print(json.dumps(result, indent=2))
             return 0 if result.get("ok", False) else 1
     except Exception as exc:
         print(f"operator error: {exc}", file=sys.stderr)

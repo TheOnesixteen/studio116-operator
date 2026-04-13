@@ -38,6 +38,6 @@ def run_read_only_command(command: list[str], *, action: str, timeout: int = 10)
 
 def tail_operator_log(lines: int, log_path) -> str:
     if not log_path.exists():
-        return ""
+        return "(no Operator/runtime log found)"
     content = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     return "\n".join(content[-lines:])

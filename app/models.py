@@ -20,6 +20,7 @@ TASK_STATES = (
 
 
 TERMINAL_TASK_STATES = {"done", "failed", "canceled"}
+HEALTH_STATUSES = ("ok", "warning", "failed")
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class CommandResult:
 
 @dataclass(frozen=True)
 class HealthCheckResult:
-    ok: bool
+    overall_status: str
+    task_succeeded: bool
     summary: str
+    key_findings: list[str]
     checks: list[dict[str, Any]]

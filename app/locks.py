@@ -64,6 +64,20 @@ def attach_run_to_lock(lock_id: str, run_id: str) -> None:
         )
 
 
+def active_locks() -> list[dict]:
+    with transaction() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, lock_type, resource_key, task_id, run_id, worker_name,
+                   acquired_at, heartbeat_at, expires_at, metadata_json
+            FROM locks
+            WHERE status = 'active'
+            ORDER BY acquired_at ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def release_lock(lock_id: str) -> None:
     with transaction() as conn:
         row = conn.execute("SELECT task_id, run_id, lock_type, resource_key FROM locks WHERE id = ?", (lock_id,)).fetchone()
