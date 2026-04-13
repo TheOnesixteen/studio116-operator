@@ -16,3 +16,43 @@ def create_health_check_task() -> str:
         ],
         metadata={"phase": 1, "read_only": True},
     )
+
+
+def create_delegated_dry_run_task(
+    *,
+    project: str,
+    title: str,
+    goal: str,
+    worker: str,
+    read_only: bool = False,
+    requested_by: str = "Rusty",
+) -> str:
+    return create_task(
+        project=project,
+        task_type="delegated",
+        title=title,
+        goal=goal,
+        requested_by=requested_by,
+        constraints=[
+            "Phase 2 first slice dry-run only",
+            "Do not launch delegated workers",
+            "No deployment",
+            "No service restarts",
+            "No config mutation",
+            "No secret reads",
+            "No dashboard or webhook work",
+            "No worktree cleanup automation",
+        ],
+        acceptance_criteria=[
+            "Acquire scheduler-owned SQLite locks",
+            "Write worker packet artifact",
+            "Record intended worker command",
+            "Stop before launching the worker",
+        ],
+        routing={
+            "worker": worker,
+            "delegation_mode": "dry_run",
+            "read_only": read_only or worker == "claude_code",
+        },
+        metadata={"phase": 2, "first_slice": True},
+    )

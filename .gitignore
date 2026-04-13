@@ -10,6 +10,8 @@ runtime/tasks/**
 !runtime/tasks/.gitkeep
 runtime/sessions/**
 !runtime/sessions/.gitkeep
+runtime/worktrees/**
+!runtime/worktrees/.gitkeep
 
 .codex/
 .codex

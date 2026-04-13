@@ -108,3 +108,27 @@ def scheduler_lock(task_id: str | None = None, run_id: str | None = None) -> Ite
         yield lock_id
     finally:
         release_lock(lock_id)
+
+
+@contextmanager
+def managed_lock(
+    *,
+    lock_type: str,
+    resource_key: str,
+    task_id: str | None = None,
+    run_id: str | None = None,
+    worker_name: str | None = None,
+    metadata: dict | None = None,
+) -> Iterator[str]:
+    lock_id = acquire_lock(
+        lock_type=lock_type,
+        resource_key=resource_key,
+        task_id=task_id,
+        run_id=run_id,
+        worker_name=worker_name,
+        metadata=metadata,
+    )
+    try:
+        yield lock_id
+    finally:
+        release_lock(lock_id)

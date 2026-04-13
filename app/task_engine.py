@@ -4,11 +4,16 @@ import json
 import uuid
 from typing import Any
 
+from adapters.base import worker_packet
+from adapters.claude_code import intended_read_only_command
+from adapters.codex import intended_dry_run_command
 from app.artifact_store import write_json_artifact
+from app.config import get_settings
 from app.db import transaction
 from app.events import record_event, utc_now
 from app.models import HEALTH_STATUSES
 from app.state_manager import assert_transition, validate_status
+from tools.git_tools import create_worktree, delegated_branch_name, delegated_worktree_path
 from tools.caddy_tools import inspect_caddy
 from tools.docker_tools import inspect_docker_health
 from tools.systemd_tools import inspect_service
@@ -28,6 +33,7 @@ def create_task(
     requested_by: str = "Rusty",
     constraints: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
+    routing: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> str:
     task_id = str(uuid.uuid4())
@@ -51,7 +57,7 @@ def create_task(
                 requested_by,
                 json.dumps(constraints or ["Phase 1 read-only and non-destructive"]),
                 json.dumps(acceptance_criteria or []),
-                "{}",
+                json.dumps(routing or {}, sort_keys=True),
                 "[]",
                 json.dumps(metadata or {}, sort_keys=True),
                 now,
@@ -118,11 +124,22 @@ def show_task(task_id: str) -> dict[str, Any]:
             "SELECT * FROM events WHERE task_id = ? ORDER BY created_at ASC",
             (task_id,),
         ).fetchall()
+        worker_executions = conn.execute(
+            """
+            SELECT worker_executions.*
+            FROM worker_executions
+            JOIN task_runs ON task_runs.id = worker_executions.run_id
+            WHERE task_runs.task_id = ?
+            ORDER BY worker_executions.started_at ASC
+            """,
+            (task_id,),
+        ).fetchall()
     return {
         "task": dict(task),
         "runs": [dict(row) for row in runs],
         "artifacts": [dict(row) for row in artifacts],
         "events": [dict(row) for row in events],
+        "worker_executions": [dict(row) for row in worker_executions],
     }
 
 
@@ -167,6 +184,18 @@ def create_run(task_id: str, *, worker_name: str, run_type: str) -> str:
     return run_id
 
 
+def update_run_workspace(run_id: str, *, worktree_path: str | None, branch_name: str | None) -> None:
+    with transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_runs
+            SET worktree_path = ?, branch_name = ?, heartbeat_at = ?
+            WHERE id = ?
+            """,
+            (worktree_path, branch_name, utc_now(), run_id),
+        )
+
+
 def finish_run(run_id: str, *, task_id: str, status: str, exit_code: int, summary: str) -> None:
     with transaction() as conn:
         conn.execute(
@@ -202,6 +231,142 @@ def record_worker_execution(run_id: str, worker_name: str, result) -> None:
                 json.dumps({"timed_out": result.timed_out}, sort_keys=True),
             ),
         )
+
+
+def record_intended_worker_command(
+    *,
+    run_id: str,
+    worker_name: str,
+    command: list[str],
+    stdin_summary: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO worker_executions (
+              id, run_id, worker_name, command, stdin_summary, stdout, stderr, exit_code,
+              started_at, completed_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                run_id,
+                worker_name,
+                " ".join(command),
+                stdin_summary,
+                "",
+                "",
+                None,
+                utc_now(),
+                utc_now(),
+                json.dumps(metadata or {}, sort_keys=True),
+            ),
+        )
+
+
+def _task_json(task: dict[str, Any], key: str, default):
+    raw = task.get(key)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return default
+
+
+def run_delegated_dry_run(task: dict[str, Any], run_id: str) -> dict[str, Any]:
+    routing = _task_json(task, "routing_json", {})
+    constraints = _task_json(task, "constraints_json", [])
+    worker = routing.get("worker", "codex")
+    delegation_mode = routing.get("delegation_mode", "dry_run")
+    if delegation_mode != "dry_run":
+        raise PermissionError("First Phase 2 slice supports delegated dry_run only")
+    if worker not in {"codex", "claude_code"}:
+        raise PermissionError(f"First Phase 2 slice does not support worker: {worker}")
+
+    settings = get_settings()
+    read_only = worker == "claude_code" or bool(routing.get("read_only"))
+    allowed_actions = ["inspect_files", "read_logs"]
+    branch_name = None
+    worktree_path = None
+
+    if worker == "codex":
+        if task["project"] != "operator":
+            raise PermissionError("First delegated Codex dry-run slice is limited to project=operator")
+        read_only = False
+        allowed_actions.extend(["create_worktrees", "create_branches", "draft_patches", "run_tests"])
+        branch_name = delegated_branch_name(task_id=task["id"], worker=worker, title=task["title"])
+        worktree_path = delegated_worktree_path(task_id=task["id"], worker=worker)
+        result = create_worktree(repo_path=settings.repo_root, worktree_path=worktree_path, branch_name=branch_name)
+        record_worker_execution(run_id, "shell_ops", result)
+        if result.exit_code != 0:
+            raise RuntimeError(f"Failed to create delegated worktree: {result.stderr or result.stdout}")
+        update_run_workspace(run_id, worktree_path=str(worktree_path), branch_name=branch_name)
+    else:
+        read_only = True
+        allowed_actions.append("delegate_read_only")
+        update_run_workspace(run_id, worktree_path=None, branch_name=None)
+
+    packet = worker_packet(
+        worker=worker,
+        task=task,
+        run_id=run_id,
+        mode="dry_run",
+        allowed_actions=allowed_actions,
+        constraints=constraints,
+        branch_name=branch_name,
+        worktree_path=worktree_path,
+        read_only=read_only,
+    )
+    packet_path = write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="worker_packet",
+        label=f"{worker} dry-run worker packet",
+        data=packet,
+    )
+    if worker == "codex":
+        intended_command = intended_dry_run_command(packet_path=packet_path, worktree_path=worktree_path)
+    else:
+        intended_command = intended_read_only_command(packet_path=packet_path)
+    record_intended_worker_command(
+        run_id=run_id,
+        worker_name=worker,
+        command=intended_command,
+        stdin_summary=f"Dry-run packet artifact: {packet_path}",
+        metadata={"dry_run": True, "launched": False, "packet_path": str(packet_path)},
+    )
+    summary = f"Delegated dry-run prepared for {worker}; intended command recorded but not launched"
+    summary_path = write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="delegation_summary",
+        label=f"{worker} dry-run delegation summary",
+        data={
+            "summary": summary,
+            "worker": worker,
+            "mode": "dry_run",
+            "launched": False,
+            "worktree_path": str(worktree_path) if worktree_path else None,
+            "branch_name": branch_name,
+            "packet_path": str(packet_path),
+            "intended_command": intended_command,
+        },
+    )
+    record_event(
+        "delegation_dry_run_prepared",
+        f"Prepared {worker} dry-run delegation packet: {packet_path}",
+        task_id=task["id"],
+        run_id=run_id,
+        metadata={"summary_path": str(summary_path), "worker": worker},
+    )
+    return {
+        "overall_status": "ok",
+        "task_succeeded": True,
+        "summary": summary,
+        "key_findings": [summary],
+    }
 
 
 def _classify_check(label: str, result) -> tuple[str, str]:

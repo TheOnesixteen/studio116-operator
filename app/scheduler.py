@@ -1,7 +1,20 @@
 from __future__ import annotations
 
-from app.locks import attach_run_to_lock, heartbeat_lock, scheduler_lock
-from app.task_engine import create_run, finish_run, get_task, next_queued_task, run_health_check, transition_task
+import json
+from contextlib import ExitStack, contextmanager
+
+from app.config import get_settings
+from app.locks import attach_run_to_lock, heartbeat_lock, managed_lock, scheduler_lock
+from app.task_engine import (
+    create_run,
+    finish_run,
+    get_task,
+    next_queued_task,
+    run_delegated_dry_run,
+    run_health_check,
+    transition_task,
+)
+from tools.git_tools import delegated_worktree_path
 
 
 def run_next(task_id: str | None = None) -> dict:
@@ -12,17 +25,24 @@ def run_next(task_id: str | None = None) -> dict:
         return {"ran": False, "message": f"Task is {task['status']}, not queued", "task_id": task["id"]}
 
     run_id: str | None = None
+    routing = _task_json(task, "routing_json", {})
+    worker_name = routing.get("worker", "shell_ops") if task["type"] == "delegated" else "shell_ops"
+    run_type = "delegated_dry_run" if task["type"] == "delegated" else task["type"] or "task"
+
     with scheduler_lock(task_id=task["id"]) as lock_id:
-        run_id = create_run(task["id"], worker_name="shell_ops", run_type=task["type"] or "task")
+        run_id = create_run(task["id"], worker_name=worker_name, run_type=run_type)
         try:
             attach_run_to_lock(lock_id, run_id)
             heartbeat_lock(lock_id)
-            transition_task(task["id"], "planning", message="Scheduler planning Phase 1 read-only task")
-            transition_task(task["id"], "ready", message="Task ready for read-only execution")
+            transition_task(task["id"], "planning", message="Scheduler planning task")
+            transition_task(task["id"], "ready", message="Task ready for execution")
             transition_task(task["id"], "running", message="Task running under scheduler-owned lock")
 
             if task["type"] == "health_check":
                 health_result = run_health_check(task["id"], run_id)
+            elif task["type"] == "delegated":
+                with _delegation_locks(task, run_id, worker_name):
+                    health_result = run_delegated_dry_run(task, run_id)
             else:
                 health_result = {
                     "overall_status": "failed",
@@ -55,3 +75,62 @@ def run_next(task_id: str | None = None) -> dict:
             if current and current["status"] not in {"done", "failed", "canceled"}:
                 transition_task(task["id"], "failed", message=str(exc))
             raise
+
+
+def _task_json(task: dict, key: str, default):
+    raw = task.get(key)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return default
+
+
+@contextmanager
+def _delegation_locks(task: dict, run_id: str, worker_name: str):
+    stack = ExitStack()
+    try:
+        stack.enter_context(
+            managed_lock(
+                lock_type="worker",
+                resource_key=worker_name,
+                task_id=task["id"],
+                run_id=run_id,
+                worker_name="scheduler",
+            )
+        )
+        if worker_name == "codex":
+            settings = get_settings()
+            worktree_path = delegated_worktree_path(task_id=task["id"], worker=worker_name)
+            stack.enter_context(
+                managed_lock(
+                    lock_type="delegated_writer",
+                    resource_key="codex",
+                    task_id=task["id"],
+                    run_id=run_id,
+                    worker_name="scheduler",
+                    metadata={"first_slice": True},
+                )
+            )
+            stack.enter_context(
+                managed_lock(
+                    lock_type="repo",
+                    resource_key=str(settings.repo_root),
+                    task_id=task["id"],
+                    run_id=run_id,
+                    worker_name="scheduler",
+                )
+            )
+            stack.enter_context(
+                managed_lock(
+                    lock_type="worktree",
+                    resource_key=str(worktree_path),
+                    task_id=task["id"],
+                    run_id=run_id,
+                    worker_name="scheduler",
+                )
+            )
+        yield
+    finally:
+        stack.close()
