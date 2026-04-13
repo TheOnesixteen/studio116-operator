@@ -1,0 +1,68 @@
+projects:
+  kairoke:
+    repo_path: /root/Projects/kairoke.com
+    type: flask_app
+    deploy_method: deploy-kairoke
+    runtime:
+      service: kairoke.service
+      port: 5000
+      reverse_proxy: caddy
+    tags: [web, flask, ai, music, n8n]
+    risk_level: medium
+    notes: "AI karaoke platform. Song generation via Mureka API."
+
+  skilagrange:
+    repo_path: /root/Projects/skilagrange.com
+    type: siteground_site
+    deploy_method: deploy-ski
+    runtime:
+      host: SiteGround
+    tags: [website, forms, n8n, twilio]
+    risk_level: low
+    notes: "Lead form → n8n → Twilio SMS to Coach Mike."
+
+  kdomusic:
+    repo_path: /root/Projects/kdomusic.com
+    type: siteground_site
+    deploy_method: deploy-katie
+    tags: [website, music, client]
+    risk_level: low
+    notes: "Needs YouTube IDs, booking email, hero photo."
+
+  combsplumbing:
+    repo_path: /root/Projects/combsplumbing.com
+    type: siteground_site
+    deploy_method: deploy-combs
+    tags: [website, client]
+    risk_level: low
+
+  robinolinger:
+    repo_path: /root/Projects/robinolinger.com
+    type: siteground_site
+    deploy_method: deploy-robin
+    tags: [website, real_estate, idx]
+    risk_level: low
+    notes: "Pending GAMLS IDX Vendor Agreement."
+
+  studio116:
+    repo_path: /root/Projects/116.studio-AI
+    type: automation
+    deploy_method: deploy-studio
+    tags: [automation, orchestration, ops]
+    risk_level: medium
+
+  vps:
+    repo_path: /root
+    type: infrastructure
+    deploy_method: manual
+    tags: [docker, caddy, systemd, ubuntu]
+    risk_level: high
+    notes: "2GB RAM / 2vCPU. n8n + kairoke + Caddy running."
+
+  operator:
+    repo_path: /root/Projects/studio116-operator
+    type: python_service
+    deploy_method: systemd
+    tags: [orchestration, ai, meta]
+    risk_level: high
+    notes: "This is the Operator itself."

@@ -1,0 +1,50 @@
+workers:
+  claude_code:
+    type: cli
+    command: "116studio-ai"
+    role: planner_and_reviewer
+    strengths:
+      - architecture_decisions
+      - ambiguous_debugging
+      - repo_comprehension
+      - code_review
+      - prompt_design
+      - multi_step_reasoning
+    weaknesses:
+      - can_burn_tokens_on_rabbit_holes
+      - sessions_drop_on_long_tasks
+    concurrency: 1
+    cost: claude_pro_subscription
+    adapter: adapters.claude_code
+    notes: "Best for planning, architecture, review, and ambiguous problems."
+
+  codex:
+    type: cli
+    command: "codex"
+    role: implementer
+    strengths:
+      - file_changes
+      - test_execution
+      - refactoring
+      - terminal_execution
+      - scoped_implementation
+    weaknesses:
+      - less_strong_on_ambiguous_architecture
+    concurrency: 1
+    cost: gpt_subscription
+    adapter: adapters.codex
+    notes: "Best for implementation, patching, test-fix cycles, and concrete execution."
+
+  shell_ops:
+    type: native
+    role: ops_and_diagnostics
+    strengths:
+      - log_inspection
+      - service_status
+      - docker_checks
+      - network_validation
+      - disk_and_memory
+    concurrency: 2
+    cost: free
+    adapter: adapters.shell
+    notes: "Best for health checks, logs, and diagnostics."

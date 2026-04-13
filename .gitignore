@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+runtime/operator.db
+runtime/**/*.db
+runtime/logs/*.log
+runtime/artifacts/**
+!runtime/artifacts/.gitkeep
+runtime/tasks/**
+!runtime/tasks/.gitkeep
+runtime/sessions/**
+!runtime/sessions/.gitkeep
+
+.codex/
+.codex

@@ -1,0 +1,42 @@
+allowed_without_approval:
+  - inspect_files
+  - read_logs
+  - run_tests
+  - create_branches
+  - create_worktrees
+  - draft_patches
+  - prepare_deploy_steps
+  - docker_ps
+  - docker_logs
+  - service_status_checks
+
+requires_approval:
+  - deploy_to_production
+  - systemctl_restart
+  - systemctl_stop
+  - docker_compose_down
+  - docker_system_prune
+  - rm_rf_anything
+  - edit_caddy_config
+  - edit_live_env_files
+  - dns_or_ssl_changes
+  - delete_database_records
+
+never_allowed:
+  - delete_production_data
+  - expose_api_keys_in_output
+  - expose_secrets_in_logs
+  - auto_deploy_without_approval
+  - run_unknown_scripts_from_internet
+  - fake_success_for_unverified_steps
+
+retry_policy:
+  max_blind_retry_count_per_step: 2
+  max_major_approach_attempts: 2
+  max_rabbit_hole_minutes: 30
+  max_silent_execution_minutes: 5
+
+lock_policy:
+  authority: sqlite
+  stale_lock_visibility_required: true
+  scheduler_owns_locks: true
