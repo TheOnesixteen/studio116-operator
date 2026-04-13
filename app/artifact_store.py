@@ -17,13 +17,58 @@ def write_json_artifact(
     artifact_type: str,
     label: str,
     data: dict[str, Any],
+    filename: str | None = None,
 ) -> Path:
     settings = get_settings()
     ensure_runtime_dirs(settings)
     task_dir = settings.artifacts_dir / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
-    path = task_dir / f"{run_id}-{artifact_type}.json"
+    if filename:
+        path = task_dir / run_id / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path = task_dir / f"{run_id}-{artifact_type}.json"
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO task_artifacts (
+              id, task_id, run_id, artifact_type, path, label, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                task_id,
+                run_id,
+                artifact_type,
+                str(path),
+                label,
+                utc_now(),
+                "{}",
+            ),
+        )
+    return path
+
+
+def write_text_artifact(
+    *,
+    task_id: str,
+    run_id: str,
+    artifact_type: str,
+    label: str,
+    content: str,
+    filename: str | None = None,
+) -> Path:
+    settings = get_settings()
+    ensure_runtime_dirs(settings)
+    task_dir = settings.artifacts_dir / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    if filename:
+        path = task_dir / run_id / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path = task_dir / f"{run_id}-{artifact_type}.txt"
+    path.write_text(content, encoding="utf-8")
     with transaction() as conn:
         conn.execute(
             """

@@ -11,6 +11,7 @@ from app.task_engine import (
     get_task,
     next_queued_task,
     run_delegated_dry_run,
+    run_live_codex_docs_only,
     run_health_check,
     transition_task,
 )
@@ -27,7 +28,8 @@ def run_next(task_id: str | None = None) -> dict:
     run_id: str | None = None
     routing = _task_json(task, "routing_json", {})
     worker_name = routing.get("worker", "shell_ops") if task["type"] == "delegated" else "shell_ops"
-    run_type = "delegated_dry_run" if task["type"] == "delegated" else task["type"] or "task"
+    delegation_mode = routing.get("delegation_mode", "dry_run")
+    run_type = f"delegated_{delegation_mode}" if task["type"] == "delegated" else task["type"] or "task"
 
     with scheduler_lock(task_id=task["id"]) as lock_id:
         run_id = create_run(task["id"], worker_name=worker_name, run_type=run_type)
@@ -42,7 +44,10 @@ def run_next(task_id: str | None = None) -> dict:
                 health_result = run_health_check(task["id"], run_id)
             elif task["type"] == "delegated":
                 with _delegation_locks(task, run_id, worker_name):
-                    health_result = run_delegated_dry_run(task, run_id)
+                    if delegation_mode == "live_codex_docs_only":
+                        health_result = run_live_codex_docs_only(task, run_id)
+                    else:
+                        health_result = run_delegated_dry_run(task, run_id)
             else:
                 health_result = {
                     "overall_status": "failed",
@@ -52,7 +57,9 @@ def run_next(task_id: str | None = None) -> dict:
                 }
 
             transition_task(task["id"], "review", message="Task moved to review after execution")
-            if health_result["task_succeeded"]:
+            if health_result.get("stop_in_review"):
+                finish_run(run_id, task_id=task["id"], status="review", exit_code=0, summary=health_result["summary"])
+            elif health_result["task_succeeded"]:
                 transition_task(task["id"], "done", message=health_result["summary"])
                 finish_run(run_id, task_id=task["id"], status="done", exit_code=0, summary=health_result["summary"])
             else:
@@ -63,6 +70,7 @@ def run_next(task_id: str | None = None) -> dict:
                 "summary": health_result["summary"],
                 "key_findings": health_result["key_findings"],
                 "task_succeeded": health_result["task_succeeded"],
+                "stop_in_review": bool(health_result.get("stop_in_review")),
                 "ran": True,
                 "ok": health_result["task_succeeded"],
                 "task_id": task["id"],

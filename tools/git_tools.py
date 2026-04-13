@@ -35,3 +35,36 @@ def create_worktree(*, repo_path: Path, worktree_path: Path, branch_name: str) -
         stderr=completed.stderr,
         exit_code=completed.returncode,
     )
+
+
+def git_diff(*, worktree_path: Path) -> CommandResult:
+    command = ["git", "-C", str(worktree_path), "diff", "--no-ext-diff"]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
+def git_changed_files(*, worktree_path: Path) -> CommandResult:
+    command = ["git", "-C", str(worktree_path), "diff", "--name-only"]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
+def git_head(*, worktree_path: Path) -> CommandResult:
+    command = ["git", "-C", str(worktree_path), "rev-parse", "HEAD"]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )

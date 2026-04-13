@@ -8,9 +8,9 @@ from app.config import get_settings
 from app.db import init_db
 from app.locks import active_locks
 from app.models import TASK_STATES
-from app.router import create_delegated_dry_run_task, create_health_check_task
+from app.router import create_delegated_dry_run_task, create_health_check_task, create_live_codex_docs_only_task
 from app.scheduler import run_next
-from app.task_engine import create_task, list_tasks, show_task
+from app.task_engine import approve_task, create_task, list_tasks, reject_task, show_task
 from tools.log_tools import tail_operator_log
 
 
@@ -29,11 +29,15 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--priority", default="medium")
     create.add_argument("--requested-by", default="Rusty")
     create.add_argument("--worker", choices=("codex", "claude_code"))
-    create.add_argument("--delegation-mode", choices=("dry_run",), default="dry_run")
+    create.add_argument("--delegation-mode", choices=("dry_run", "live_codex_docs_only"), default="dry_run")
     create.add_argument("--read-only", action="store_true")
 
     show = task_subparsers.add_parser("show")
     show.add_argument("task_id")
+    approve = task_subparsers.add_parser("approve")
+    approve.add_argument("task_id")
+    reject = task_subparsers.add_parser("reject")
+    reject.add_argument("task_id")
 
     tasks = subparsers.add_parser("tasks")
     tasks_subparsers = tasks.add_subparsers(dest="tasks_command", required=True)
@@ -71,16 +75,24 @@ def main(argv: list[str] | None = None) -> int:
             if args.task_type == "delegated":
                 if not args.worker:
                     raise ValueError("--worker is required for delegated tasks")
-                if args.delegation_mode != "dry_run":
-                    raise ValueError("First Phase 2 slice supports --delegation-mode dry_run only")
-                task_id = create_delegated_dry_run_task(
-                    project=args.project,
-                    title=args.title,
-                    goal=args.goal,
-                    worker=args.worker,
-                    read_only=args.read_only,
-                    requested_by=args.requested_by,
-                )
+                if args.delegation_mode == "live_codex_docs_only":
+                    if args.worker != "codex":
+                        raise ValueError("live_codex_docs_only requires --worker codex")
+                    task_id = create_live_codex_docs_only_task(
+                        project=args.project,
+                        title=args.title,
+                        goal=args.goal,
+                        requested_by=args.requested_by,
+                    )
+                else:
+                    task_id = create_delegated_dry_run_task(
+                        project=args.project,
+                        title=args.title,
+                        goal=args.goal,
+                        worker=args.worker,
+                        read_only=args.read_only,
+                        requested_by=args.requested_by,
+                    )
             else:
                 task_id = create_task(
                     project=args.project,
@@ -95,6 +107,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "task" and args.task_command == "show":
             print(json.dumps(show_task(args.task_id), indent=2, sort_keys=True))
+            return 0
+
+        if args.command == "task" and args.task_command == "approve":
+            print(json.dumps(approve_task(args.task_id), indent=2, sort_keys=True))
+            return 0
+
+        if args.command == "task" and args.task_command == "reject":
+            print(json.dumps(reject_task(args.task_id), indent=2, sort_keys=True))
             return 0
 
         if args.command == "tasks" and args.tasks_command == "list":

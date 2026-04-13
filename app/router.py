@@ -56,3 +56,51 @@ def create_delegated_dry_run_task(
         },
         metadata={"phase": 2, "first_slice": True},
     )
+
+
+def create_live_codex_docs_only_task(
+    *,
+    project: str,
+    title: str,
+    goal: str,
+    requested_by: str = "Rusty",
+) -> str:
+    return create_task(
+        project=project,
+        task_type="delegated",
+        title=title,
+        goal=goal,
+        requested_by=requested_by,
+        constraints=[
+            "Phase 2.1 live Codex docs-only slice",
+            "Target README.md only",
+            "One writable live Codex task at a time",
+            "Use isolated worktree only",
+            "Canonical checkout must remain untouched",
+            "Timeout after 10 minutes",
+            "No deployment",
+            "No service restarts",
+            "No config mutation",
+            "No secret reads",
+            "No package installs",
+            "No network-dependent work",
+            "No auto-commit",
+            "No auto-merge",
+            "No auto-push",
+            "No worktree cleanup automation",
+        ],
+        acceptance_criteria=[
+            "Write preflight_result.json before launching Codex",
+            "Launch Codex only if all required preflight checks pass",
+            "Write worker_packet.json, worker_result.json, git_diff.patch, changed_files.json, and review_summary.json",
+            "Stop in review after successful Codex execution",
+            "Require Rusty approval before any follow-on action",
+        ],
+        routing={
+            "worker": "codex",
+            "delegation_mode": "live_codex_docs_only",
+            "read_only": False,
+            "target_paths": ["README.md"],
+        },
+        metadata={"phase": "2.1", "first_live_codex_slice": True},
+    )

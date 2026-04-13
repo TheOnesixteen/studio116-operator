@@ -6,14 +6,22 @@ from typing import Any
 
 from adapters.base import worker_packet
 from adapters.claude_code import intended_read_only_command
-from adapters.codex import intended_dry_run_command
+from adapters.codex import intended_dry_run_command, live_docs_only_command, run_live_docs_only
 from app.artifact_store import write_json_artifact
+from app.artifact_store import write_text_artifact
 from app.config import get_settings
 from app.db import transaction
 from app.events import record_event, utc_now
 from app.models import HEALTH_STATUSES
+from app.policies import (
+    LIVE_CODEX_DOCS_ONLY_MODE,
+    LIVE_CODEX_DOCS_ONLY_TARGETS,
+    LIVE_CODEX_TIMEOUT_SECONDS,
+    live_codex_preflight_checks,
+    validate_live_codex_changed_files,
+)
 from app.state_manager import assert_transition, validate_status
-from tools.git_tools import create_worktree, delegated_branch_name, delegated_worktree_path
+from tools.git_tools import create_worktree, delegated_branch_name, delegated_worktree_path, git_changed_files, git_diff, git_head
 from tools.caddy_tools import inspect_caddy
 from tools.docker_tools import inspect_docker_health
 from tools.systemd_tools import inspect_service
@@ -265,6 +273,28 @@ def record_intended_worker_command(
         )
 
 
+def approve_task(task_id: str) -> dict[str, Any]:
+    task = get_task(task_id)
+    if not task:
+        raise ValueError(f"Task not found: {task_id}")
+    if task["status"] != "review":
+        raise ValueError(f"Task must be in review to approve; current status is {task['status']}")
+    transition_task(task_id, "done", message="Rusty approved the reviewed diff")
+    record_event("task_approved", "Rusty approved the reviewed diff", task_id=task_id)
+    return {"task_id": task_id, "status": "done", "approved": True, "worktree_preserved": True}
+
+
+def reject_task(task_id: str) -> dict[str, Any]:
+    task = get_task(task_id)
+    if not task:
+        raise ValueError(f"Task not found: {task_id}")
+    if task["status"] != "review":
+        raise ValueError(f"Task must be in review to reject; current status is {task['status']}")
+    transition_task(task_id, "canceled", message="Rusty rejected the reviewed diff")
+    record_event("task_rejected", "Rusty rejected the reviewed diff", task_id=task_id)
+    return {"task_id": task_id, "status": "canceled", "rejected": True, "worktree_preserved": True}
+
+
 def _task_json(task: dict[str, Any], key: str, default):
     raw = task.get(key)
     if not raw:
@@ -366,6 +396,237 @@ def run_delegated_dry_run(task: dict[str, Any], run_id: str) -> dict[str, Any]:
         "task_succeeded": True,
         "summary": summary,
         "key_findings": [summary],
+    }
+
+
+def _artifact_path_for(task_id: str, run_id: str, filename: str):
+    return get_settings().artifacts_dir / task_id / run_id / filename
+
+
+def _active_delegated_writer_count_excluding(run_id: str) -> int:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM locks
+            WHERE status = 'active'
+              AND lock_type = 'delegated_writer'
+              AND resource_key = 'codex'
+              AND (run_id IS NULL OR run_id != ?)
+            """,
+            (run_id,),
+        ).fetchone()
+    return int(row["count"])
+
+
+def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any]:
+    routing = _task_json(task, "routing_json", {})
+    constraints = _task_json(task, "constraints_json", [])
+    worker = routing.get("worker")
+    delegation_mode = routing.get("delegation_mode")
+    target_paths = routing.get("target_paths") or routing.get("targets") or LIVE_CODEX_DOCS_ONLY_TARGETS
+    if isinstance(target_paths, str):
+        target_paths = [target_paths]
+
+    settings = get_settings()
+    branch_name = delegated_branch_name(task_id=task["id"], worker="codex", title=task["title"])
+    worktree_path = delegated_worktree_path(task_id=task["id"], worker="codex")
+    worktree_result = create_worktree(repo_path=settings.repo_root, worktree_path=worktree_path, branch_name=branch_name)
+    record_worker_execution(run_id, "shell_ops", worktree_result)
+    worktree_ready = worktree_result.exit_code == 0 or worktree_path.exists()
+    update_run_workspace(run_id, worktree_path=str(worktree_path), branch_name=branch_name)
+
+    packet_path = _artifact_path_for(task["id"], run_id, "worker_packet.json")
+    intended_command = live_docs_only_command(worktree_path=worktree_path, packet_path=packet_path)
+    preflight_checks = live_codex_preflight_checks(
+        project=task["project"],
+        worker=worker,
+        mode=delegation_mode,
+        target_paths=target_paths,
+        repo_root=settings.repo_root,
+        worktree_path=worktree_path,
+        command_cwd=worktree_path,
+        active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
+        goal=task["goal"],
+        constraints=constraints,
+        worktree_ready=worktree_ready,
+    )
+    preflight_passed = all(check["passed"] for check in preflight_checks)
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="preflight_result",
+        label="Live Codex docs-only preflight result",
+        filename="preflight_result.json",
+        data={
+            "mode": LIVE_CODEX_DOCS_ONLY_MODE,
+            "passed": preflight_passed,
+            "checks": preflight_checks,
+            "target_paths": target_paths,
+            "timeout_seconds": LIVE_CODEX_TIMEOUT_SECONDS,
+            "worktree_path": str(worktree_path),
+            "branch_name": branch_name,
+        },
+    )
+    if not preflight_passed:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": "Live Codex docs-only preflight failed; Codex was not launched",
+            "key_findings": [check["name"] for check in preflight_checks if not check["passed"]],
+        }
+
+    base_head_result = git_head(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", base_head_result)
+    packet = worker_packet(
+        worker="codex",
+        task=task,
+        run_id=run_id,
+        mode=LIVE_CODEX_DOCS_ONLY_MODE,
+        allowed_actions=["inspect_files", "draft_patches", "run_tests"],
+        constraints=[
+            *constraints,
+            "Live Codex docs-only slice",
+            "Modify README.md only",
+            "Do not install packages",
+            "Do not use network-dependent work",
+            "Do not commit, merge, or push",
+        ],
+        branch_name=branch_name,
+        worktree_path=worktree_path,
+        read_only=False,
+    )
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="worker_packet",
+        label="Codex live docs-only worker packet",
+        filename="worker_packet.json",
+        data={
+            **packet,
+            "target_paths": target_paths,
+            "timeout_seconds": LIVE_CODEX_TIMEOUT_SECONDS,
+        },
+    )
+
+    codex_result = run_live_docs_only(
+        worktree_path=worktree_path,
+        packet_path=packet_path,
+        timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
+    )
+    record_worker_execution(run_id, "codex", codex_result)
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="worker_result",
+        label="Codex live docs-only worker result",
+        filename="worker_result.json",
+        data={
+            "timed_out": codex_result.timed_out,
+            "exit_code": codex_result.exit_code,
+            "stdout": codex_result.stdout,
+            "stderr": codex_result.stderr,
+            "command": codex_result.command,
+        },
+    )
+    if codex_result.timed_out:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": "Live Codex docs-only execution timed out after 10 minutes",
+            "key_findings": ["timeout_after_10_minutes", f"worktree preserved at {worktree_path}"],
+        }
+    if codex_result.exit_code != 0:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": f"Live Codex docs-only execution failed with exit code {codex_result.exit_code}",
+            "key_findings": [codex_result.stderr or codex_result.stdout or "Codex returned nonzero exit code"],
+        }
+
+    diff_result = git_diff(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", diff_result)
+    changed_result = git_changed_files(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", changed_result)
+    current_head_result = git_head(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", current_head_result)
+    changed_files = [line.strip() for line in changed_result.stdout.splitlines() if line.strip()]
+    post_run_checks = validate_live_codex_changed_files(changed_files)
+    post_run_checks.append(
+        {
+            "name": "no_auto_commit_or_merge",
+            "passed": base_head_result.exit_code == 0
+            and current_head_result.exit_code == 0
+            and base_head_result.stdout.strip() == current_head_result.stdout.strip(),
+            "details": {
+                "base_head": base_head_result.stdout.strip(),
+                "current_head": current_head_result.stdout.strip(),
+            },
+        }
+    )
+    post_run_checks.append(
+        {
+            "name": "no_auto_push",
+            "passed": True,
+            "details": {"enforcement": "Codex packet forbids push; local post-run push detection is not available"},
+        }
+    )
+    post_run_passed = diff_result.exit_code == 0 and changed_result.exit_code == 0 and all(
+        check["passed"] for check in post_run_checks
+    )
+    write_text_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="git_diff",
+        label="Codex live docs-only git diff",
+        filename="git_diff.patch",
+        content=diff_result.stdout,
+    )
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="changed_files",
+        label="Codex live docs-only changed files",
+        filename="changed_files.json",
+        data={
+            "changed_files": changed_files,
+            "checks": post_run_checks,
+            "passed": post_run_passed,
+        },
+    )
+    review_summary = {
+        "summary": "Live Codex docs-only task is ready for Rusty review"
+        if post_run_passed
+        else "Live Codex docs-only post-run validation failed",
+        "requires_approval": True,
+        "approval_required_before": ["merge", "commit", "push", "follow_on_action"],
+        "task_stops_in": "review" if post_run_passed else "failed",
+        "worktree_path": str(worktree_path),
+        "branch_name": branch_name,
+        "changed_files": changed_files,
+        "post_run_checks": post_run_checks,
+    }
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="review_summary",
+        label="Codex live docs-only review summary",
+        filename="review_summary.json",
+        data=review_summary,
+    )
+    if not post_run_passed:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": "Live Codex docs-only post-run validation failed",
+            "key_findings": [check["name"] for check in post_run_checks if not check["passed"]],
+        }
+    return {
+        "overall_status": "ok",
+        "task_succeeded": True,
+        "stop_in_review": True,
+        "summary": "Live Codex docs-only task is ready for Rusty review",
+        "key_findings": ["README.md diff requires Rusty approval before any follow-on action"],
     }
 
 

@@ -109,3 +109,31 @@ Dry-run behavior:
 - Claude Code gets a read-only worker packet artifact and no mutable worktree.
 - `worker_executions` records the intended command with `dry_run: true` and `launched: false`.
 - No worker process is launched.
+
+## Live Codex Docs-Only Slice
+
+Phase 2.1 allows one live delegated Codex task shape:
+
+```bash
+scripts/operator task create --project operator --type delegated --title "README docs update" --goal "Make a docs-only README.md change" --worker codex --delegation-mode live_codex_docs_only
+scripts/operator run next
+scripts/operator task show <task_id>
+```
+
+Guardrails:
+
+- Target is `README.md` only.
+- Codex runs in `runtime/worktrees/<task_id>/codex`, not the canonical checkout.
+- Only one writable live Codex task can run at a time.
+- Timeout is 10 minutes.
+- No package installs, network-dependent work, hidden files, env files, deploy/config/system files, commits, merges, pushes, or worktree cleanup.
+- Successful live Codex execution stops in `review`, not `done`.
+
+Review actions:
+
+```bash
+scripts/operator task approve <task_id>
+scripts/operator task reject <task_id>
+```
+
+Approval marks the task `done`; rejection marks it `canceled`. Both preserve the worktree.

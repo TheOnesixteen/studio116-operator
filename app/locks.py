@@ -78,6 +78,39 @@ def active_locks() -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def active_lock_count(
+    *,
+    lock_type: str,
+    resource_key: str,
+    exclude_run_id: str | None = None,
+) -> int:
+    with transaction() as conn:
+        if exclude_run_id:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM locks
+                WHERE status = 'active'
+                  AND lock_type = ?
+                  AND resource_key = ?
+                  AND (run_id IS NULL OR run_id != ?)
+                """,
+                (lock_type, resource_key, exclude_run_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM locks
+                WHERE status = 'active'
+                  AND lock_type = ?
+                  AND resource_key = ?
+                """,
+                (lock_type, resource_key),
+            ).fetchone()
+    return int(row["count"])
+
+
 def release_lock(lock_id: str) -> None:
     with transaction() as conn:
         row = conn.execute("SELECT task_id, run_id, lock_type, resource_key FROM locks WHERE id = ?", (lock_id,)).fetchone()
