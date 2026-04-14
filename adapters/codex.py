@@ -10,7 +10,7 @@ def intended_dry_run_command(*, packet_path: Path, worktree_path: Path) -> list[
     return [
         "codex",
         "exec",
-        "--cwd",
+        "-C",
         str(worktree_path),
         "--packet",
         str(packet_path),
@@ -24,7 +24,7 @@ def live_docs_only_command(*, worktree_path: Path, packet_path: Path) -> list[st
         "Do not install packages, use network-dependent work, commit, merge, push, "
         "modify hidden files, modify env files, or touch deployment/config/system files."
     )
-    return ["codex", "exec", "--cwd", str(worktree_path), prompt]
+    return ["codex", "exec", "-C", str(worktree_path), prompt]
 
 
 def run_live_docs_only(*, worktree_path: Path, packet_path: Path, timeout_seconds: int = 600) -> CommandResult:
