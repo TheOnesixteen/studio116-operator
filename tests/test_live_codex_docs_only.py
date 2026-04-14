@@ -139,7 +139,7 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         self.assertFalse(result["task_succeeded"])
         self.assertEqual(task_view["task"]["status"], "failed")
         self.assertFalse(changed_data["passed"])
-        self.assertTrue(any(check["name"] == "changed_files_are_readme_only" and not check["passed"] for check in changed_data["checks"]))
+        self.assertTrue(any(check["name"] == "changed_files_are_policy_allowed" and not check["passed"] for check in changed_data["checks"]))
 
     def test_approve_and_reject_only_from_review(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-approve")

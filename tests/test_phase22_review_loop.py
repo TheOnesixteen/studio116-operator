@@ -140,7 +140,7 @@ class Phase22ReviewLoopTests(unittest.TestCase):
         apply_check.assert_not_called()
         preflight = _artifact_data(task_view, "promotion_preflight")
         self.assertFalse(preflight["passed"])
-        self.assertTrue(any(check["name"] == "changed_files_are_readme_only" and not check["passed"] for check in preflight["checks"]))
+        self.assertTrue(any(check["name"] == "changed_files_are_policy_allowed" and not check["passed"] for check in preflight["checks"]))
 
     def test_approve_writes_promotion_summary_and_rollback_patch_artifacts(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-phase22-approve-artifacts")

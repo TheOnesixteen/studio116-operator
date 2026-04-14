@@ -6,6 +6,8 @@ Phase 2 first-slice work adds delegated dry-run preparation only. The Operator c
 
 Phase 2.2 closes the proven live Codex docs-only review-and-approval loop for the Operator repo only. Approval promotes a validated `README.md` patch into the canonical working tree without committing, merging, or pushing. Rejection archives and discards only the delegated worktree's `README.md` change.
 
+Phase 2.3 keeps the same live Codex review loop and replaces the hardcoded `README.md` target with a policy-backed docs whitelist. The active whitelist lives in `registry/policies.yaml` and allows `README.md`, `OPERATOR.md`, and `AGENTS.md`.
+
 `OPERATOR.md` is the master source of truth. `AGENTS.md` rules apply here: never auto-deploy, never expose secrets, use SQLite locks only, and keep the scheduler responsible for lock lifecycle.
 
 ## Scope
@@ -34,6 +36,14 @@ Included in the Phase 2.2 review loop:
 - Explicit rejection that archives `rejected_patch.patch` and discards only the delegated worktree's `README.md` change.
 - Preserved worktrees and artifacts.
 
+Included in the Phase 2.3 docs whitelist:
+
+- Policy-backed live Codex docs targets from `registry/policies.yaml`.
+- Active allowed targets: `README.md`, `OPERATOR.md`, and `AGENTS.md`.
+- `README.md` remains the default target when no `--target-path` is supplied.
+- Every requested target and every changed file must be policy-allowed before launch, after run, and during approve/reject.
+- Rejection restores each validated changed docs file in the delegated worktree.
+
 Not included:
 
 - Deployment.
@@ -46,7 +56,8 @@ Not included:
 - Dashboards or webhooks.
 - Automatic worktree cleanup or deletion.
 - Commits, merges, or pushes from approval.
-- Any Phase 2.2 target beyond `README.md`.
+- Any live Codex target outside the active docs whitelist.
+- `docs/*.md` activation.
 
 ## First Run
 
@@ -133,6 +144,18 @@ scripts/operator run next
 scripts/operator task show <task_id>
 ```
 
+Select another whitelisted docs target explicitly:
+
+```bash
+scripts/operator task create --project operator --type delegated --title "Operator docs update" --goal "Make a docs-only OPERATOR.md change" --worker codex --delegation-mode live_codex_docs_only --target-path OPERATOR.md
+```
+
+Multiple whitelisted docs targets are allowed up to the 5-file ceiling:
+
+```bash
+scripts/operator task create --project operator --type delegated --title "Docs wording update" --goal "Make docs-only wording changes" --worker codex --delegation-mode live_codex_docs_only --target-path README.md --target-path AGENTS.md
+```
+
 Guardrails:
 
 - Target is `README.md` only.
@@ -149,8 +172,8 @@ scripts/operator task approve <task_id>
 scripts/operator task reject <task_id>
 ```
 
-Approval re-checks the delegated worktree diff, requires `README.md` only, writes `promotion_preflight.json`, `approved_patch.patch`, `rollback_patch.patch`, and `promotion_summary.json`, then applies the approved patch to the canonical working tree without commit, merge, or push. Successful approval marks the task `done`.
+Approval re-checks the delegated worktree diff, requires policy-whitelisted docs files only, writes `promotion_preflight.json`, `approved_patch.patch`, `rollback_patch.patch`, and `promotion_summary.json`, then applies the approved patch to the canonical working tree without commit, merge, or push. Successful approval marks the task `done`.
 
-Rejection writes `rejected_patch.patch`, discards only the delegated worktree's `README.md` change, writes `discard_summary.json`, and marks the task `canceled`.
+Rejection writes `rejected_patch.patch`, discards only the validated delegated worktree docs changes, writes `discard_summary.json`, and marks the task `canceled`.
 
 Failed approval or discard attempts leave the task in `review` and record failure artifacts/events. Worktrees and artifacts are preserved.

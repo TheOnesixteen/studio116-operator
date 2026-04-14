@@ -10,6 +10,11 @@ allowed_without_approval:
   - docker_logs
   - service_status_checks
 
+live_codex_docs_only_allowed_targets:
+  - README.md
+  - OPERATOR.md
+  - AGENTS.md
+
 requires_approval:
   - deploy_to_production
   - systemctl_restart

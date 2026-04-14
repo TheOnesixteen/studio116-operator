@@ -31,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--worker", choices=("codex", "claude_code"))
     create.add_argument("--delegation-mode", choices=("dry_run", "live_codex_docs_only"), default="dry_run")
     create.add_argument("--read-only", action="store_true")
+    create.add_argument("--target-path", action="append", dest="target_paths")
 
     show = task_subparsers.add_parser("show")
     show.add_argument("task_id")
@@ -82,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
                         project=args.project,
                         title=args.title,
                         goal=args.goal,
+                        target_paths=args.target_paths,
                         requested_by=args.requested_by,
                     )
                 else:

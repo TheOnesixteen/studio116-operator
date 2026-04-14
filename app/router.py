@@ -63,8 +63,10 @@ def create_live_codex_docs_only_task(
     project: str,
     title: str,
     goal: str,
+    target_paths: list[str] | None = None,
     requested_by: str = "Rusty",
 ) -> str:
+    target_paths = target_paths or ["README.md"]
     return create_task(
         project=project,
         task_type="delegated",
@@ -73,7 +75,7 @@ def create_live_codex_docs_only_task(
         requested_by=requested_by,
         constraints=[
             "Phase 2.1 live Codex docs-only slice",
-            "Target README.md only",
+            f"Target policy-whitelisted docs path(s) only: {', '.join(target_paths)}",
             "One writable live Codex task at a time",
             "Use isolated worktree only",
             "Canonical checkout must remain untouched",
@@ -100,7 +102,7 @@ def create_live_codex_docs_only_task(
             "worker": "codex",
             "delegation_mode": "live_codex_docs_only",
             "read_only": False,
-            "target_paths": ["README.md"],
+            "target_paths": target_paths,
         },
-        metadata={"phase": "2.1", "first_live_codex_slice": True},
+        metadata={"phase": "2.3", "live_codex_docs_whitelist": True},
     )

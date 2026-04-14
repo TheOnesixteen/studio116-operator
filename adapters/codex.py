@@ -20,7 +20,7 @@ def intended_dry_run_command(*, packet_path: Path, worktree_path: Path) -> list[
 def live_docs_only_command(*, worktree_path: Path, packet_path: Path) -> list[str]:
     prompt = (
         "Use the worker packet at "
-        f"{packet_path}. Perform only the requested docs-only README.md change. "
+        f"{packet_path}. Perform only the requested docs-only target path change. "
         "Do not install packages, use network-dependent work, commit, merge, push, "
         "modify hidden files, modify env files, or touch deployment/config/system files."
     )
