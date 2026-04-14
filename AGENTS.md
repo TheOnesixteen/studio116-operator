@@ -11,3 +11,5 @@ Rules:
 - Scheduler owns lock lifecycle
 - Build Phase 1 only unless explicitly told otherwise
 - Keep implementation simple, inspectable, and resumable
+
+Phase 2.3 whitelist is fully smoke-proven.
