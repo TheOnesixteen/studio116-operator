@@ -4,7 +4,7 @@ Phase 1.1 builds the foundation: a local Python CLI, SQLite task storage, SQLite
 
 Phase 2 first-slice work adds delegated dry-run preparation only. The Operator can prepare a worker packet, create a Codex worktree, record an intended worker command, and stop before launching any delegated worker.
 
-Phase 2.2 closes the proven live Codex docs-only review loop for the Operator repo only. Approval promotes a validated `README.md` patch into the canonical working tree without committing, merging, or pushing. Rejection archives and discards only the delegated worktree's `README.md` change.
+Phase 2.2 closes the proven live Codex docs-only review-and-approval loop for the Operator repo only. Approval promotes a validated `README.md` patch into the canonical working tree without committing, merging, or pushing. Rejection archives and discards only the delegated worktree's `README.md` change.
 
 `OPERATOR.md` is the master source of truth. `AGENTS.md` rules apply here: never auto-deploy, never expose secrets, use SQLite locks only, and keep the scheduler responsible for lock lifecycle.
 
