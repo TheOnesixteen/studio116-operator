@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+from typing import Any, Iterator
 
 from adapters.base import worker_packet
 from adapters.claude_code import intended_read_only_command
@@ -12,6 +14,7 @@ from app.artifact_store import write_text_artifact
 from app.config import get_settings
 from app.db import transaction
 from app.events import record_event, utc_now
+from app.locks import managed_lock
 from app.models import HEALTH_STATUSES
 from app.policies import (
     LIVE_CODEX_DOCS_ONLY_MODE,
@@ -21,7 +24,18 @@ from app.policies import (
     validate_live_codex_changed_files,
 )
 from app.state_manager import assert_transition, validate_status
-from tools.git_tools import create_worktree, delegated_branch_name, delegated_worktree_path, git_changed_files, git_diff, git_head
+from tools.git_tools import (
+    create_worktree,
+    delegated_branch_name,
+    delegated_worktree_path,
+    git_apply_check,
+    git_apply_patch,
+    git_changed_files,
+    git_diff,
+    git_head,
+    git_restore_path,
+    git_reverse_diff,
+)
 from tools.caddy_tools import inspect_caddy
 from tools.docker_tools import inspect_docker_health
 from tools.systemd_tools import inspect_service
@@ -279,9 +293,36 @@ def approve_task(task_id: str) -> dict[str, Any]:
         raise ValueError(f"Task not found: {task_id}")
     if task["status"] != "review":
         raise ValueError(f"Task must be in review to approve; current status is {task['status']}")
-    transition_task(task_id, "done", message="Rusty approved the reviewed diff")
-    record_event("task_approved", "Rusty approved the reviewed diff", task_id=task_id)
-    return {"task_id": task_id, "status": "done", "approved": True, "worktree_preserved": True}
+    run = _latest_review_run(task_id)
+    _assert_phase22_review_task(task, run)
+    with _review_action_locks(task, run):
+        try:
+            result = _promote_live_codex_docs_only(task, run)
+        except Exception as exc:
+            record_event(
+                "promotion_failed",
+                f"Approved diff promotion failed; task remains in review: {exc}",
+                task_id=task_id,
+                run_id=run["id"],
+                level="warning",
+            )
+            raise
+    transition_task(task_id, "done", message="Rusty approved and promoted the reviewed README.md diff")
+    record_event(
+        "task_approved",
+        "Rusty approved and promoted the reviewed README.md diff",
+        task_id=task_id,
+        run_id=run["id"],
+        metadata={"promotion_summary_path": result["promotion_summary_path"]},
+    )
+    return {
+        "task_id": task_id,
+        "status": "done",
+        "approved": True,
+        "promoted": True,
+        "worktree_preserved": True,
+        **result,
+    }
 
 
 def reject_task(task_id: str) -> dict[str, Any]:
@@ -290,9 +331,436 @@ def reject_task(task_id: str) -> dict[str, Any]:
         raise ValueError(f"Task not found: {task_id}")
     if task["status"] != "review":
         raise ValueError(f"Task must be in review to reject; current status is {task['status']}")
-    transition_task(task_id, "canceled", message="Rusty rejected the reviewed diff")
-    record_event("task_rejected", "Rusty rejected the reviewed diff", task_id=task_id)
-    return {"task_id": task_id, "status": "canceled", "rejected": True, "worktree_preserved": True}
+    run = _latest_review_run(task_id)
+    _assert_phase22_review_task(task, run)
+    with _review_action_locks(task, run):
+        try:
+            result = _discard_live_codex_docs_only(task, run)
+        except Exception as exc:
+            record_event(
+                "discard_failed",
+                f"Rejected diff discard failed; task remains in review: {exc}",
+                task_id=task_id,
+                run_id=run["id"],
+                level="warning",
+            )
+            raise
+    transition_task(task_id, "canceled", message="Rusty rejected and discarded the reviewed README.md diff")
+    record_event(
+        "task_rejected",
+        "Rusty rejected and discarded the reviewed README.md diff",
+        task_id=task_id,
+        run_id=run["id"],
+        metadata={"discard_summary_path": result["discard_summary_path"]},
+    )
+    return {
+        "task_id": task_id,
+        "status": "canceled",
+        "rejected": True,
+        "discarded": True,
+        "worktree_preserved": True,
+        **result,
+    }
+
+
+def _latest_review_run(task_id: str) -> dict[str, Any]:
+    with transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM task_runs
+            WHERE task_id = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (task_id,),
+        ).fetchone()
+    if not row:
+        raise ValueError(f"No run found for task: {task_id}")
+    return dict(row)
+
+
+def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> None:
+    routing = _task_json(task, "routing_json", {})
+    if task["project"] != "operator":
+        raise PermissionError("Phase 2.2 review loop is limited to project=operator")
+    if task["type"] != "delegated":
+        raise PermissionError("Phase 2.2 review loop is limited to delegated tasks")
+    if routing.get("worker") != "codex":
+        raise PermissionError("Phase 2.2 review loop is limited to worker=codex")
+    if routing.get("delegation_mode") != LIVE_CODEX_DOCS_ONLY_MODE:
+        raise PermissionError("Phase 2.2 review loop is limited to live_codex_docs_only")
+    if routing.get("target_paths") != LIVE_CODEX_DOCS_ONLY_TARGETS:
+        raise PermissionError("Phase 2.2 review loop is limited to README.md")
+    if run["worker_name"] != "codex" or run["run_type"] != f"delegated_{LIVE_CODEX_DOCS_ONLY_MODE}":
+        raise PermissionError("Phase 2.2 review loop requires a live Codex docs-only run")
+    if not run["worktree_path"]:
+        raise ValueError("Phase 2.2 review loop requires a preserved worktree")
+
+
+@contextmanager
+def _review_action_locks(task: dict[str, Any], run: dict[str, Any]) -> Iterator[None]:
+    settings = get_settings()
+    stack = ExitStack()
+    try:
+        stack.enter_context(
+            managed_lock(
+                lock_type="scheduler",
+                resource_key=f"review:{task['id']}",
+                task_id=task["id"],
+                run_id=run["id"],
+                worker_name="scheduler",
+                metadata={"phase": "2.2", "action": "review_loop"},
+            )
+        )
+        stack.enter_context(
+            managed_lock(
+                lock_type="delegated_writer",
+                resource_key="codex",
+                task_id=task["id"],
+                run_id=run["id"],
+                worker_name="scheduler",
+                metadata={"phase": "2.2"},
+            )
+        )
+        stack.enter_context(
+            managed_lock(
+                lock_type="repo",
+                resource_key=str(settings.repo_root),
+                task_id=task["id"],
+                run_id=run["id"],
+                worker_name="scheduler",
+                metadata={"phase": "2.2"},
+            )
+        )
+        stack.enter_context(
+            managed_lock(
+                lock_type="worktree",
+                resource_key=str(run["worktree_path"]),
+                task_id=task["id"],
+                run_id=run["id"],
+                worker_name="scheduler",
+                metadata={"phase": "2.2"},
+            )
+        )
+        yield
+    finally:
+        stack.close()
+
+
+def _worktree_path_for_review(run: dict[str, Any]) -> Path:
+    worktree_path = Path(run["worktree_path"]).resolve()
+    runtime_worktrees = get_settings().worktrees_dir.resolve()
+    if runtime_worktrees not in [worktree_path, *worktree_path.parents]:
+        raise PermissionError("Phase 2.2 review worktree must be under runtime/worktrees")
+    return worktree_path
+
+
+def _changed_files_from_result(result) -> list[str]:
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _phase22_changed_file_checks(changed_files: list[str]) -> tuple[list[dict], bool]:
+    checks = validate_live_codex_changed_files(changed_files)
+    passed = changed_files == LIVE_CODEX_DOCS_ONLY_TARGETS and all(check["passed"] for check in checks)
+    return checks, passed
+
+
+def _write_promotion_preflight(
+    *,
+    task: dict[str, Any],
+    run: dict[str, Any],
+    worktree_path: Path,
+    changed_files: list[str],
+    checks: list[dict],
+    apply_check_result=None,
+    passed: bool,
+    summary: str,
+) -> Path:
+    preflight_checks = [
+        {"name": "task_status_is_review", "passed": task["status"] == "review"},
+        {"name": "project_is_operator", "passed": task["project"] == "operator"},
+        {"name": "worker_is_codex", "passed": run["worker_name"] == "codex"},
+        {"name": "mode_is_live_codex_docs_only", "passed": run["run_type"] == f"delegated_{LIVE_CODEX_DOCS_ONLY_MODE}"},
+        {"name": "worktree_under_runtime_worktrees", "passed": True},
+        *checks,
+    ]
+    if apply_check_result is not None:
+        preflight_checks.append(
+            {
+                "name": "canonical_git_apply_check",
+                "passed": apply_check_result.exit_code == 0,
+                "details": {
+                    "command": apply_check_result.command,
+                    "exit_code": apply_check_result.exit_code,
+                    "stdout": apply_check_result.stdout,
+                    "stderr": apply_check_result.stderr,
+                },
+            }
+        )
+    return write_json_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="promotion_preflight",
+        label="Phase 2.2 promotion preflight",
+        filename="promotion_preflight.json",
+        data={
+            "summary": summary,
+            "passed": passed,
+            "changed_files": changed_files,
+            "checks": preflight_checks,
+            "worktree_path": str(worktree_path),
+            "canonical_repo_path": str(get_settings().repo_root),
+        },
+    )
+
+
+def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    settings = get_settings()
+    worktree_path = _worktree_path_for_review(run)
+    diff_result = git_diff(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", diff_result)
+    changed_result = git_changed_files(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", changed_result)
+    changed_files = _changed_files_from_result(changed_result)
+    checks, changed_files_passed = _phase22_changed_file_checks(changed_files)
+    if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files_passed:
+        preflight_path = _write_promotion_preflight(
+            task=task,
+            run=run,
+            worktree_path=worktree_path,
+            changed_files=changed_files,
+            checks=checks,
+            passed=False,
+            summary="Phase 2.2 promotion preflight failed before patch apply check",
+        )
+        raise RuntimeError(f"Phase 2.2 promotion preflight failed; task remains in review: {preflight_path}")
+
+    approved_patch_path = write_text_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="approved_patch",
+        label="Phase 2.2 approved README.md patch",
+        filename="approved_patch.patch",
+        content=diff_result.stdout,
+    )
+    rollback_result = git_reverse_diff(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", rollback_result)
+    if rollback_result.exit_code != 0:
+        preflight_path = _write_promotion_preflight(
+            task=task,
+            run=run,
+            worktree_path=worktree_path,
+            changed_files=changed_files,
+            checks=checks,
+            passed=False,
+            summary="Phase 2.2 promotion preflight failed while generating rollback patch",
+        )
+        raise RuntimeError(f"Failed to generate rollback patch; task remains in review: {preflight_path}")
+    rollback_patch_path = write_text_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="rollback_patch",
+        label="Phase 2.2 rollback patch for promoted README.md diff",
+        filename="rollback_patch.patch",
+        content=rollback_result.stdout,
+    )
+    apply_check_result = git_apply_check(repo_path=settings.repo_root, patch_path=approved_patch_path)
+    record_worker_execution(run["id"], "shell_ops", apply_check_result)
+    if apply_check_result.exit_code != 0:
+        preflight_path = _write_promotion_preflight(
+            task=task,
+            run=run,
+            worktree_path=worktree_path,
+            changed_files=changed_files,
+            checks=checks,
+            apply_check_result=apply_check_result,
+            passed=False,
+            summary="Phase 2.2 promotion blocked because the approved patch no longer applies cleanly",
+        )
+        raise RuntimeError(f"Approved patch no longer applies cleanly; task remains in review: {preflight_path}")
+
+    promotion_preflight_path = _write_promotion_preflight(
+        task=task,
+        run=run,
+        worktree_path=worktree_path,
+        changed_files=changed_files,
+        checks=checks,
+        apply_check_result=apply_check_result,
+        passed=True,
+        summary="Phase 2.2 promotion preflight passed",
+    )
+    canonical_head_before = git_head(worktree_path=settings.repo_root)
+    record_worker_execution(run["id"], "shell_ops", canonical_head_before)
+    apply_result = git_apply_patch(repo_path=settings.repo_root, patch_path=approved_patch_path)
+    record_worker_execution(run["id"], "shell_ops", apply_result)
+    if apply_result.exit_code != 0:
+        write_json_artifact(
+            task_id=task["id"],
+            run_id=run["id"],
+            artifact_type="promotion_summary",
+            label="Phase 2.2 failed promotion summary",
+            filename="promotion_summary.json",
+            data={
+                "summary": "Approved README.md patch apply failed after a successful apply check; task remains in review",
+                "promoted": False,
+                "changed_files": changed_files,
+                "canonical_repo_path": str(settings.repo_root),
+                "worktree_path": str(worktree_path),
+                "branch_name": run["branch_name"],
+                "promotion_preflight_path": str(promotion_preflight_path),
+                "approved_patch_path": str(approved_patch_path),
+                "rollback_patch_path": str(rollback_patch_path),
+                "apply": {
+                    "command": apply_result.command,
+                    "exit_code": apply_result.exit_code,
+                    "stdout": apply_result.stdout,
+                    "stderr": apply_result.stderr,
+                },
+                "commit_created": False,
+                "merged": False,
+                "pushed": False,
+                "worktree_preserved": True,
+            },
+        )
+        raise RuntimeError("Approved patch apply failed after a successful apply check; task remains in review")
+    canonical_head_after = git_head(worktree_path=settings.repo_root)
+    record_worker_execution(run["id"], "shell_ops", canonical_head_after)
+    promotion_summary_path = write_json_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="promotion_summary",
+        label="Phase 2.2 promotion summary",
+        filename="promotion_summary.json",
+        data={
+            "summary": "Approved README.md diff promoted to the canonical working tree without commit, merge, or push",
+            "promoted": True,
+            "changed_files": changed_files,
+            "canonical_repo_path": str(settings.repo_root),
+            "worktree_path": str(worktree_path),
+            "branch_name": run["branch_name"],
+            "promotion_preflight_path": str(promotion_preflight_path),
+            "approved_patch_path": str(approved_patch_path),
+            "rollback_patch_path": str(rollback_patch_path),
+            "canonical_head_before": canonical_head_before.stdout.strip(),
+            "canonical_head_after": canonical_head_after.stdout.strip(),
+            "commit_created": False,
+            "merged": False,
+            "pushed": False,
+            "worktree_preserved": True,
+        },
+    )
+    record_event(
+        "promotion_succeeded",
+        "Promoted approved README.md diff to canonical working tree without commit, merge, or push",
+        task_id=task["id"],
+        run_id=run["id"],
+        metadata={"promotion_summary_path": str(promotion_summary_path)},
+    )
+    return {
+        "promotion_preflight_path": str(promotion_preflight_path),
+        "approved_patch_path": str(approved_patch_path),
+        "rollback_patch_path": str(rollback_patch_path),
+        "promotion_summary_path": str(promotion_summary_path),
+    }
+
+
+def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    worktree_path = _worktree_path_for_review(run)
+    diff_result = git_diff(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", diff_result)
+    changed_result = git_changed_files(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", changed_result)
+    changed_files = _changed_files_from_result(changed_result)
+    checks, changed_files_passed = _phase22_changed_file_checks(changed_files)
+    rejected_patch_path = write_text_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="rejected_patch",
+        label="Phase 2.2 rejected README.md patch",
+        filename="rejected_patch.patch",
+        content=diff_result.stdout,
+    )
+    if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files_passed:
+        discard_summary_path = write_json_artifact(
+            task_id=task["id"],
+            run_id=run["id"],
+            artifact_type="discard_summary",
+            label="Phase 2.2 discard summary",
+            filename="discard_summary.json",
+            data={
+                "summary": "Rejected diff discard failed before restore because changed files were not README.md only",
+                "discarded": False,
+                "changed_files": changed_files,
+                "checks": checks,
+                "rejected_patch_path": str(rejected_patch_path),
+                "worktree_path": str(worktree_path),
+                "canonical_repo_touched": False,
+            },
+        )
+        raise RuntimeError(f"Phase 2.2 discard preflight failed; task remains in review: {discard_summary_path}")
+
+    restore_result = git_restore_path(worktree_path=worktree_path, target_path="README.md")
+    record_worker_execution(run["id"], "shell_ops", restore_result)
+    if restore_result.exit_code != 0:
+        discard_summary_path = write_json_artifact(
+            task_id=task["id"],
+            run_id=run["id"],
+            artifact_type="discard_summary",
+            label="Phase 2.2 discard summary",
+            filename="discard_summary.json",
+            data={
+                "summary": "Rejected README.md diff discard failed during git restore",
+                "discarded": False,
+                "changed_files": changed_files,
+                "checks": checks,
+                "restore": {
+                    "command": restore_result.command,
+                    "exit_code": restore_result.exit_code,
+                    "stdout": restore_result.stdout,
+                    "stderr": restore_result.stderr,
+                },
+                "rejected_patch_path": str(rejected_patch_path),
+                "worktree_path": str(worktree_path),
+                "canonical_repo_touched": False,
+            },
+        )
+        raise RuntimeError(f"Phase 2.2 discard failed; task remains in review: {discard_summary_path}")
+
+    discard_summary_path = write_json_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="discard_summary",
+        label="Phase 2.2 discard summary",
+        filename="discard_summary.json",
+        data={
+            "summary": "Rejected README.md diff discarded from delegated worktree; artifacts and worktree preserved",
+            "discarded": True,
+            "changed_files": changed_files,
+            "checks": checks,
+            "restore": {
+                "command": restore_result.command,
+                "exit_code": restore_result.exit_code,
+                "stdout": restore_result.stdout,
+                "stderr": restore_result.stderr,
+            },
+            "rejected_patch_path": str(rejected_patch_path),
+            "worktree_path": str(worktree_path),
+            "canonical_repo_touched": False,
+            "worktree_preserved": True,
+        },
+    )
+    record_event(
+        "discard_succeeded",
+        "Rejected README.md diff discarded from delegated worktree; artifacts and worktree preserved",
+        task_id=task["id"],
+        run_id=run["id"],
+        metadata={"discard_summary_path": str(discard_summary_path)},
+    )
+    return {
+        "rejected_patch_path": str(rejected_patch_path),
+        "discard_summary_path": str(discard_summary_path),
+    }
 
 
 def _task_json(task: dict[str, Any], key: str, default):

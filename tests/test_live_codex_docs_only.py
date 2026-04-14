@@ -153,11 +153,23 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
                     goal="Make a docs-only README.md change",
                 )
                 run_next(task_id)
-            approved = approve_task(task_id)
+            with mock.patch("app.task_engine.git_diff", return_value=CommandResult("git diff", "diff --git a/README.md b/README.md\n", "", 0)), mock.patch(
+                "app.task_engine.git_changed_files", return_value=CommandResult("git diff --name-only", "README.md\n", "", 0)
+            ), mock.patch(
+                "app.task_engine.git_reverse_diff", return_value=CommandResult("git diff -R", "diff --git a/README.md b/README.md\n", "", 0)
+            ), mock.patch(
+                "app.task_engine.git_apply_check", return_value=CommandResult("git apply --check", "", "", 0)
+            ), mock.patch(
+                "app.task_engine.git_apply_patch", return_value=CommandResult("git apply", "", "", 0)
+            ), mock.patch(
+                "app.task_engine.git_head", return_value=CommandResult("git rev-parse HEAD", "abc123\n", "", 0)
+            ):
+                approved = approve_task(task_id)
             with self.assertRaises(ValueError):
                 reject_task(task_id)
 
         self.assertEqual(approved["status"], "done")
+        self.assertTrue(approved["promoted"])
         self.assertTrue(approved["worktree_preserved"])
 
         runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-reject")
@@ -171,9 +183,15 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
                     goal="Make a docs-only README.md change",
                 )
                 run_next(task_id)
-            rejected = reject_task(task_id)
+            with mock.patch("app.task_engine.git_diff", return_value=CommandResult("git diff", "diff --git a/README.md b/README.md\n", "", 0)), mock.patch(
+                "app.task_engine.git_changed_files", return_value=CommandResult("git diff --name-only", "README.md\n", "", 0)
+            ), mock.patch(
+                "app.task_engine.git_restore_path", return_value=CommandResult("git restore -- README.md", "", "", 0)
+            ):
+                rejected = reject_task(task_id)
 
         self.assertEqual(rejected["status"], "canceled")
+        self.assertTrue(rejected["discarded"])
         self.assertTrue(rejected["worktree_preserved"])
 
 

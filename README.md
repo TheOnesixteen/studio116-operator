@@ -4,6 +4,8 @@ Phase 1.1 builds the foundation: a local Python CLI, SQLite task storage, SQLite
 
 Phase 2 first-slice work adds delegated dry-run preparation only. The Operator can prepare a worker packet, create a Codex worktree, record an intended worker command, and stop before launching any delegated worker.
 
+Phase 2.2 closes the proven live Codex docs-only review loop for the Operator repo only. Approval promotes a validated `README.md` patch into the canonical working tree without committing, merging, or pushing. Rejection archives and discards only the delegated worktree's `README.md` change.
+
 `OPERATOR.md` is the master source of truth. `AGENTS.md` rules apply here: never auto-deploy, never expose secrets, use SQLite locks only, and keep the scheduler responsible for lock lifecycle.
 
 ## Scope
@@ -23,6 +25,15 @@ Included in the Phase 2 first slice:
 - SQLite locks for scheduler, worker, repo, worktree, and the single writable Codex lane.
 - Intended worker command recording only.
 
+Included in the Phase 2.2 review loop:
+
+- Explicit human-triggered approval promotion for `live_codex_docs_only` review tasks.
+- `README.md` only, Operator repo only, Codex only.
+- Promotion preflight with `git apply --check` against the canonical checkout to block stale-base patches.
+- Preserved `approved_patch.patch`, `rollback_patch.patch`, and `promotion_summary.json`.
+- Explicit rejection that archives `rejected_patch.patch` and discards only the delegated worktree's `README.md` change.
+- Preserved worktrees and artifacts.
+
 Not included:
 
 - Deployment.
@@ -34,6 +45,8 @@ Not included:
 - Claude Code file changes.
 - Dashboards or webhooks.
 - Automatic worktree cleanup or deletion.
+- Commits, merges, or pushes from approval.
+- Any Phase 2.2 target beyond `README.md`.
 
 ## First Run
 
@@ -136,4 +149,8 @@ scripts/operator task approve <task_id>
 scripts/operator task reject <task_id>
 ```
 
-Approval marks the task `done`; rejection marks it `canceled`. Both preserve the worktree.
+Approval re-checks the delegated worktree diff, requires `README.md` only, writes `promotion_preflight.json`, `approved_patch.patch`, `rollback_patch.patch`, and `promotion_summary.json`, then applies the approved patch to the canonical working tree without commit, merge, or push. Successful approval marks the task `done`.
+
+Rejection writes `rejected_patch.patch`, discards only the delegated worktree's `README.md` change, writes `discard_summary.json`, and marks the task `canceled`.
+
+Failed approval or discard attempts leave the task in `review` and record failure artifacts/events. Worktrees and artifacts are preserved.

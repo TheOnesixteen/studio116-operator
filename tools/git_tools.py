@@ -68,3 +68,47 @@ def git_head(*, worktree_path: Path) -> CommandResult:
         stderr=completed.stderr,
         exit_code=completed.returncode,
     )
+
+
+def git_reverse_diff(*, worktree_path: Path) -> CommandResult:
+    command = ["git", "-C", str(worktree_path), "diff", "--no-ext-diff", "-R"]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
+def git_apply_check(*, repo_path: Path, patch_path: Path) -> CommandResult:
+    command = ["git", "-C", str(repo_path), "apply", "--check", str(patch_path)]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
+def git_apply_patch(*, repo_path: Path, patch_path: Path) -> CommandResult:
+    command = ["git", "-C", str(repo_path), "apply", str(patch_path)]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
+def git_restore_path(*, worktree_path: Path, target_path: str) -> CommandResult:
+    command = ["git", "-C", str(worktree_path), "restore", "--", target_path]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
