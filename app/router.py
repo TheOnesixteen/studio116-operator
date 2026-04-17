@@ -106,3 +106,56 @@ def create_live_codex_docs_only_task(
         },
         metadata={"phase": "2.3", "live_codex_docs_whitelist": True},
     )
+
+
+def create_live_codex_tests_only_task(
+    *,
+    project: str,
+    title: str,
+    goal: str,
+    target_paths: list[str] | None = None,
+    requested_by: str = "Rusty",
+) -> str:
+    target_paths = target_paths or ["tests/test_phase24_tests_whitelist.py"]
+    return create_task(
+        project=project,
+        task_type="delegated",
+        title=title,
+        goal=goal,
+        requested_by=requested_by,
+        constraints=[
+            "Phase 2.4a live Codex tests-only slice",
+            f"Target policy-whitelisted tests path(s) only: {', '.join(target_paths)}",
+            "One writable live Codex task at a time",
+            "Use isolated worktree only",
+            "Canonical checkout must remain untouched",
+            "Timeout after 10 minutes",
+            "No app code changes",
+            "No infrastructure changes",
+            "No config mutation",
+            "No runtime file changes",
+            "No deployment",
+            "No service restarts",
+            "No secret reads",
+            "No package installs",
+            "No network-dependent work",
+            "No auto-commit",
+            "No auto-merge",
+            "No auto-push",
+            "No worktree cleanup automation",
+        ],
+        acceptance_criteria=[
+            "Write preflight_result.json before launching Codex",
+            "Launch Codex only if all required preflight checks pass",
+            "Write worker_packet.json, worker_result.json, git_diff.patch, changed_files.json, and review_summary.json",
+            "Stop in review after successful Codex execution",
+            "Require Rusty approval before any follow-on action",
+        ],
+        routing={
+            "worker": "codex",
+            "delegation_mode": "live_codex_tests_only",
+            "read_only": False,
+            "target_paths": target_paths,
+        },
+        metadata={"phase": "2.4a", "live_codex_tests_whitelist": True},
+    )

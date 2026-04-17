@@ -8,7 +8,13 @@ from typing import Any, Iterator
 
 from adapters.base import worker_packet
 from adapters.claude_code import intended_read_only_command
-from adapters.codex import intended_dry_run_command, live_docs_only_command, run_live_docs_only
+from adapters.codex import (
+    intended_dry_run_command,
+    live_docs_only_command,
+    live_tests_only_command,
+    run_live_docs_only,
+    run_live_tests_only,
+)
 from app.artifact_store import write_json_artifact
 from app.artifact_store import write_text_artifact
 from app.config import get_settings
@@ -19,11 +25,14 @@ from app.models import HEALTH_STATUSES
 from app.policies import (
     LIVE_CODEX_DOCS_ONLY_MODE,
     LIVE_CODEX_DOCS_ONLY_TARGETS,
+    LIVE_CODEX_TESTS_ONLY_MODE,
+    LIVE_CODEX_TESTS_ONLY_TARGETS,
     LIVE_CODEX_TIMEOUT_SECONDS,
-    live_codex_docs_only_allowed_targets,
+    live_codex_allowed_targets_for_mode,
     live_codex_preflight_checks,
-    validate_live_codex_docs_only_paths,
-    validate_live_codex_changed_files,
+    live_codex_tests_only_preflight_checks,
+    validate_live_codex_paths_for_mode,
+    validate_live_codex_changed_files_for_mode,
 )
 from app.state_manager import assert_transition, validate_status
 from tools.git_tools import (
@@ -384,7 +393,9 @@ def _latest_review_run(task_id: str) -> dict[str, Any]:
 
 def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> None:
     routing = _task_json(task, "routing_json", {})
-    target_paths = routing.get("target_paths") or routing.get("targets") or LIVE_CODEX_DOCS_ONLY_TARGETS
+    mode = routing.get("delegation_mode")
+    default_targets = LIVE_CODEX_TESTS_ONLY_TARGETS if mode == LIVE_CODEX_TESTS_ONLY_MODE else LIVE_CODEX_DOCS_ONLY_TARGETS
+    target_paths = routing.get("target_paths") or routing.get("targets") or default_targets
     if isinstance(target_paths, str):
         target_paths = [target_paths]
     if task["project"] != "operator":
@@ -393,12 +404,12 @@ def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> No
         raise PermissionError("Phase 2.2 review loop is limited to delegated tasks")
     if routing.get("worker") != "codex":
         raise PermissionError("Phase 2.2 review loop is limited to worker=codex")
-    if routing.get("delegation_mode") != LIVE_CODEX_DOCS_ONLY_MODE:
-        raise PermissionError("Phase 2.2 review loop is limited to live_codex_docs_only")
-    if not all(check["passed"] for check in validate_live_codex_docs_only_paths(target_paths)):
-        raise PermissionError("Phase 2.3 review loop is limited to policy-whitelisted docs targets")
-    if run["worker_name"] != "codex" or run["run_type"] != f"delegated_{LIVE_CODEX_DOCS_ONLY_MODE}":
-        raise PermissionError("Phase 2.2 review loop requires a live Codex docs-only run")
+    if mode not in {LIVE_CODEX_DOCS_ONLY_MODE, LIVE_CODEX_TESTS_ONLY_MODE}:
+        raise PermissionError("Phase 2.2 review loop is limited to approved live Codex modes")
+    if not all(check["passed"] for check in validate_live_codex_paths_for_mode(mode, target_paths)):
+        raise PermissionError("Phase 2 review loop is limited to policy-whitelisted live Codex targets")
+    if run["worker_name"] != "codex" or run["run_type"] != f"delegated_{mode}":
+        raise PermissionError("Phase 2 review loop requires a matching live Codex run")
     if not run["worktree_path"]:
         raise ValueError("Phase 2.2 review loop requires a preserved worktree")
 
@@ -465,8 +476,13 @@ def _changed_files_from_result(result) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _phase22_changed_file_checks(changed_files: list[str]) -> tuple[list[dict], bool]:
-    checks = validate_live_codex_changed_files(changed_files)
+def _live_codex_mode_for_task(task: dict[str, Any]) -> str:
+    routing = _task_json(task, "routing_json", {})
+    return routing.get("delegation_mode") or LIVE_CODEX_DOCS_ONLY_MODE
+
+
+def _phase22_changed_file_checks(changed_files: list[str], mode: str) -> tuple[list[dict], bool]:
+    checks = validate_live_codex_changed_files_for_mode(mode, changed_files)
     passed = all(check["passed"] for check in checks)
     return checks, passed
 
@@ -486,7 +502,7 @@ def _write_promotion_preflight(
         {"name": "task_status_is_review", "passed": task["status"] == "review"},
         {"name": "project_is_operator", "passed": task["project"] == "operator"},
         {"name": "worker_is_codex", "passed": run["worker_name"] == "codex"},
-        {"name": "mode_is_live_codex_docs_only", "passed": run["run_type"] == f"delegated_{LIVE_CODEX_DOCS_ONLY_MODE}"},
+        {"name": "mode_is_approved_live_codex_mode", "passed": run["run_type"] in {f"delegated_{LIVE_CODEX_DOCS_ONLY_MODE}", f"delegated_{LIVE_CODEX_TESTS_ONLY_MODE}"}},
         {"name": "worktree_under_runtime_worktrees", "passed": True},
         *checks,
     ]
@@ -514,7 +530,7 @@ def _write_promotion_preflight(
             "passed": passed,
             "changed_files": changed_files,
             "checks": preflight_checks,
-            "allowed_targets": live_codex_docs_only_allowed_targets(),
+            "allowed_targets": live_codex_allowed_targets_for_mode(_live_codex_mode_for_task(task)),
             "worktree_path": str(worktree_path),
             "canonical_repo_path": str(get_settings().repo_root),
         },
@@ -529,7 +545,8 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     changed_result = git_changed_files(worktree_path=worktree_path)
     record_worker_execution(run["id"], "shell_ops", changed_result)
     changed_files = _changed_files_from_result(changed_result)
-    checks, changed_files_passed = _phase22_changed_file_checks(changed_files)
+    mode = _live_codex_mode_for_task(task)
+    checks, changed_files_passed = _phase22_changed_file_checks(changed_files, mode)
     if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files_passed:
         preflight_path = _write_promotion_preflight(
             task=task,
@@ -678,7 +695,8 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     changed_result = git_changed_files(worktree_path=worktree_path)
     record_worker_execution(run["id"], "shell_ops", changed_result)
     changed_files = _changed_files_from_result(changed_result)
-    checks, changed_files_passed = _phase22_changed_file_checks(changed_files)
+    mode = _live_codex_mode_for_task(task)
+    checks, changed_files_passed = _phase22_changed_file_checks(changed_files, mode)
     rejected_patch_path = write_text_artifact(
         task_id=task["id"],
         run_id=run["id"],
@@ -901,11 +919,20 @@ def _active_delegated_writer_count_excluding(run_id: str) -> int:
 
 
 def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any]:
+    return _run_live_codex_policy_task(task, run_id, mode=LIVE_CODEX_DOCS_ONLY_MODE)
+
+
+def run_live_codex_tests_only(task: dict[str, Any], run_id: str) -> dict[str, Any]:
+    return _run_live_codex_policy_task(task, run_id, mode=LIVE_CODEX_TESTS_ONLY_MODE)
+
+
+def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str) -> dict[str, Any]:
     routing = _task_json(task, "routing_json", {})
     constraints = _task_json(task, "constraints_json", [])
     worker = routing.get("worker")
     delegation_mode = routing.get("delegation_mode")
-    target_paths = routing.get("target_paths") or routing.get("targets") or LIVE_CODEX_DOCS_ONLY_TARGETS
+    default_targets = LIVE_CODEX_TESTS_ONLY_TARGETS if mode == LIVE_CODEX_TESTS_ONLY_MODE else LIVE_CODEX_DOCS_ONLY_TARGETS
+    target_paths = routing.get("target_paths") or routing.get("targets") or default_targets
     if isinstance(target_paths, str):
         target_paths = [target_paths]
 
@@ -918,33 +945,51 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
     update_run_workspace(run_id, worktree_path=str(worktree_path), branch_name=branch_name)
 
     packet_path = _artifact_path_for(task["id"], run_id, "worker_packet.json")
-    intended_command = live_docs_only_command(worktree_path=worktree_path, packet_path=packet_path)
-    preflight_checks = live_codex_preflight_checks(
-        project=task["project"],
-        worker=worker,
-        mode=delegation_mode,
-        target_paths=target_paths,
-        repo_root=settings.repo_root,
-        worktree_path=worktree_path,
-        command_cwd=worktree_path,
-        active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
-        goal=task["goal"],
-        constraints=constraints,
-        worktree_ready=worktree_ready,
-    )
+    if mode == LIVE_CODEX_TESTS_ONLY_MODE:
+        intended_command = live_tests_only_command(worktree_path=worktree_path, packet_path=packet_path)
+        preflight_checks = live_codex_tests_only_preflight_checks(
+            project=task["project"],
+            worker=worker,
+            mode=delegation_mode,
+            target_paths=target_paths,
+            repo_root=settings.repo_root,
+            worktree_path=worktree_path,
+            command_cwd=worktree_path,
+            active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
+            goal=task["goal"],
+            constraints=constraints,
+            worktree_ready=worktree_ready,
+        )
+        mode_label = "tests-only"
+    else:
+        intended_command = live_docs_only_command(worktree_path=worktree_path, packet_path=packet_path)
+        preflight_checks = live_codex_preflight_checks(
+            project=task["project"],
+            worker=worker,
+            mode=delegation_mode,
+            target_paths=target_paths,
+            repo_root=settings.repo_root,
+            worktree_path=worktree_path,
+            command_cwd=worktree_path,
+            active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
+            goal=task["goal"],
+            constraints=constraints,
+            worktree_ready=worktree_ready,
+        )
+        mode_label = "docs-only"
     preflight_passed = all(check["passed"] for check in preflight_checks)
     write_json_artifact(
         task_id=task["id"],
         run_id=run_id,
         artifact_type="preflight_result",
-        label="Live Codex docs-only preflight result",
+        label=f"Live Codex {mode_label} preflight result",
         filename="preflight_result.json",
         data={
-            "mode": LIVE_CODEX_DOCS_ONLY_MODE,
+            "mode": mode,
             "passed": preflight_passed,
             "checks": preflight_checks,
             "target_paths": target_paths,
-            "allowed_targets": live_codex_docs_only_allowed_targets(),
+            "allowed_targets": live_codex_allowed_targets_for_mode(mode),
             "timeout_seconds": LIVE_CODEX_TIMEOUT_SECONDS,
             "worktree_path": str(worktree_path),
             "branch_name": branch_name,
@@ -954,7 +999,7 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         return {
             "overall_status": "failed",
             "task_succeeded": False,
-            "summary": "Live Codex docs-only preflight failed; Codex was not launched",
+            "summary": f"Live Codex {mode_label} preflight failed; Codex was not launched",
             "key_findings": [check["name"] for check in preflight_checks if not check["passed"]],
         }
 
@@ -964,11 +1009,11 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         worker="codex",
         task=task,
         run_id=run_id,
-        mode=LIVE_CODEX_DOCS_ONLY_MODE,
+        mode=mode,
         allowed_actions=["inspect_files", "draft_patches", "run_tests"],
         constraints=[
             *constraints,
-            "Live Codex docs-only slice",
+            f"Live Codex {mode_label} slice",
             f"Modify only these target path(s): {', '.join(target_paths)}",
             "Do not install packages",
             "Do not use network-dependent work",
@@ -982,27 +1027,34 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         task_id=task["id"],
         run_id=run_id,
         artifact_type="worker_packet",
-        label="Codex live docs-only worker packet",
+        label=f"Codex live {mode_label} worker packet",
         filename="worker_packet.json",
         data={
             **packet,
             "target_paths": target_paths,
             "timeout_seconds": LIVE_CODEX_TIMEOUT_SECONDS,
-            "allowed_targets": live_codex_docs_only_allowed_targets(),
+            "allowed_targets": live_codex_allowed_targets_for_mode(mode),
         },
     )
 
-    codex_result = run_live_docs_only(
-        worktree_path=worktree_path,
-        packet_path=packet_path,
-        timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
-    )
+    if mode == LIVE_CODEX_TESTS_ONLY_MODE:
+        codex_result = run_live_tests_only(
+            worktree_path=worktree_path,
+            packet_path=packet_path,
+            timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
+        )
+    else:
+        codex_result = run_live_docs_only(
+            worktree_path=worktree_path,
+            packet_path=packet_path,
+            timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
+        )
     record_worker_execution(run_id, "codex", codex_result)
     write_json_artifact(
         task_id=task["id"],
         run_id=run_id,
         artifact_type="worker_result",
-        label="Codex live docs-only worker result",
+        label=f"Codex live {mode_label} worker result",
         filename="worker_result.json",
         data={
             "timed_out": codex_result.timed_out,
@@ -1016,14 +1068,14 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         return {
             "overall_status": "failed",
             "task_succeeded": False,
-            "summary": "Live Codex docs-only execution timed out after 10 minutes",
+            "summary": f"Live Codex {mode_label} execution timed out after 10 minutes",
             "key_findings": ["timeout_after_10_minutes", f"worktree preserved at {worktree_path}"],
         }
     if codex_result.exit_code != 0:
         return {
             "overall_status": "failed",
             "task_succeeded": False,
-            "summary": f"Live Codex docs-only execution failed with exit code {codex_result.exit_code}",
+            "summary": f"Live Codex {mode_label} execution failed with exit code {codex_result.exit_code}",
             "key_findings": [codex_result.stderr or codex_result.stdout or "Codex returned nonzero exit code"],
         }
 
@@ -1034,7 +1086,7 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
     current_head_result = git_head(worktree_path=worktree_path)
     record_worker_execution(run_id, "shell_ops", current_head_result)
     changed_files = [line.strip() for line in changed_result.stdout.splitlines() if line.strip()]
-    post_run_checks = validate_live_codex_changed_files(changed_files)
+    post_run_checks = validate_live_codex_changed_files_for_mode(mode, changed_files)
     post_run_checks.append(
         {
             "name": "no_auto_commit_or_merge",
@@ -1061,7 +1113,7 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         task_id=task["id"],
         run_id=run_id,
         artifact_type="git_diff",
-        label="Codex live docs-only git diff",
+        label=f"Codex live {mode_label} git diff",
         filename="git_diff.patch",
         content=diff_result.stdout,
     )
@@ -1069,7 +1121,7 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         task_id=task["id"],
         run_id=run_id,
         artifact_type="changed_files",
-        label="Codex live docs-only changed files",
+        label=f"Codex live {mode_label} changed files",
         filename="changed_files.json",
         data={
             "changed_files": changed_files,
@@ -1078,9 +1130,9 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         },
     )
     review_summary = {
-        "summary": "Live Codex docs-only task is ready for Rusty review"
+        "summary": f"Live Codex {mode_label} task is ready for Rusty review"
         if post_run_passed
-        else "Live Codex docs-only post-run validation failed",
+        else f"Live Codex {mode_label} post-run validation failed",
         "requires_approval": True,
         "approval_required_before": ["merge", "commit", "push", "follow_on_action"],
         "task_stops_in": "review" if post_run_passed else "failed",
@@ -1093,7 +1145,7 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         task_id=task["id"],
         run_id=run_id,
         artifact_type="review_summary",
-        label="Codex live docs-only review summary",
+        label=f"Codex live {mode_label} review summary",
         filename="review_summary.json",
         data=review_summary,
     )
@@ -1101,15 +1153,15 @@ def run_live_codex_docs_only(task: dict[str, Any], run_id: str) -> dict[str, Any
         return {
             "overall_status": "failed",
             "task_succeeded": False,
-            "summary": "Live Codex docs-only post-run validation failed",
+            "summary": f"Live Codex {mode_label} post-run validation failed",
             "key_findings": [check["name"] for check in post_run_checks if not check["passed"]],
         }
     return {
         "overall_status": "ok",
         "task_succeeded": True,
         "stop_in_review": True,
-        "summary": "Live Codex docs-only task is ready for Rusty review",
-        "key_findings": ["Docs diff requires Rusty approval before any follow-on action"],
+        "summary": f"Live Codex {mode_label} task is ready for Rusty review",
+        "key_findings": [f"Codex {mode_label} diff requires Rusty approval before any follow-on action"],
     }
 
 
