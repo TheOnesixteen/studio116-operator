@@ -44,6 +44,7 @@ from tools.git_tools import (
     git_apply_patch,
     git_changed_files,
     git_diff,
+    git_diff_against_ref,
     git_head,
     git_restore_path,
     git_reverse_diff,
@@ -514,6 +515,8 @@ def _write_promotion_preflight(
     apply_check_result=None,
     passed: bool,
     summary: str,
+    recommended_next_action: str | None = None,
+    stale_patch_recovery: dict[str, Any] | None = None,
 ) -> Path:
     preflight_checks = [
         {"name": "task_status_is_review", "passed": task["status"] == "review"},
@@ -544,14 +547,79 @@ def _write_promotion_preflight(
         filename="promotion_preflight.json",
         data={
             "summary": summary,
+            "recommended_next_action": recommended_next_action,
             "passed": passed,
             "changed_files": changed_files,
             "checks": preflight_checks,
             "allowed_targets": live_codex_allowed_targets_for_mode(_live_codex_mode_for_task(task)),
             "worktree_path": str(worktree_path),
             "canonical_repo_path": str(get_settings().repo_root),
+            "stale_patch_recovery": stale_patch_recovery,
         },
     )
+
+
+def _tests_only_stale_patch_recovery(
+    *,
+    settings,
+    run: dict[str, Any],
+    worktree_path: Path,
+    changed_files: list[str],
+    apply_check_result,
+) -> dict[str, Any]:
+    review_head_result = git_head(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", review_head_result)
+    canonical_head_result = git_head(worktree_path=settings.repo_root)
+    record_worker_execution(run["id"], "shell_ops", canonical_head_result)
+
+    canonical_target_diff_result = None
+    if review_head_result.exit_code == 0 and changed_files:
+        canonical_target_diff_result = git_diff_against_ref(
+            repo_path=settings.repo_root,
+            base_ref=review_head_result.stdout.strip(),
+            target_paths=changed_files,
+        )
+        record_worker_execution(run["id"], "shell_ops", canonical_target_diff_result)
+
+    target_file_drifted = (
+        canonical_target_diff_result is not None
+        and canonical_target_diff_result.exit_code == 0
+        and bool(canonical_target_diff_result.stdout.strip())
+    )
+    return {
+        "reason": "approved_patch_no_longer_applies_cleanly",
+        "target_paths": changed_files,
+        "target_file_drifted_since_review_started": target_file_drifted,
+        "review_head": {
+            "command": review_head_result.command,
+            "exit_code": review_head_result.exit_code,
+            "stdout": review_head_result.stdout,
+            "stderr": review_head_result.stderr,
+        },
+        "canonical_head": {
+            "command": canonical_head_result.command,
+            "exit_code": canonical_head_result.exit_code,
+            "stdout": canonical_head_result.stdout,
+            "stderr": canonical_head_result.stderr,
+        },
+        "apply_check": {
+            "command": apply_check_result.command,
+            "exit_code": apply_check_result.exit_code,
+            "stdout": apply_check_result.stdout,
+            "stderr": apply_check_result.stderr,
+        },
+        "canonical_target_diff": None
+        if canonical_target_diff_result is None
+        else {
+            "command": canonical_target_diff_result.command,
+            "exit_code": canonical_target_diff_result.exit_code,
+            "stdout": canonical_target_diff_result.stdout,
+            "stderr": canonical_target_diff_result.stderr,
+        },
+        "forced_apply": False,
+        "auto_merge": False,
+        "canonical_overwrite": False,
+    }
 
 
 def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
@@ -612,6 +680,21 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     apply_check_result = git_apply_check(repo_path=settings.repo_root, patch_path=approved_patch_path)
     record_worker_execution(run["id"], "shell_ops", apply_check_result)
     if apply_check_result.exit_code != 0:
+        recommended_next_action = (
+            f"Reject this stale {mode_label} review, inspect the canonical target changes, "
+            f"and create a fresh live_codex_tests_only task if the change is still wanted."
+        )
+        stale_patch_recovery = (
+            _tests_only_stale_patch_recovery(
+                settings=settings,
+                run=run,
+                worktree_path=worktree_path,
+                changed_files=changed_files,
+                apply_check_result=apply_check_result,
+            )
+            if mode == LIVE_CODEX_TESTS_ONLY_MODE
+            else None
+        )
         preflight_path = _write_promotion_preflight(
             task=task,
             run=run,
@@ -620,7 +703,12 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             checks=checks,
             apply_check_result=apply_check_result,
             passed=False,
-            summary="Live Codex promotion blocked because the approved patch no longer applies cleanly",
+            summary=(
+                f"Live Codex {mode_label} promotion blocked because the approved patch no longer applies cleanly. "
+                f"Task remains in review; no force apply, auto-merge, or canonical overwrite was attempted."
+            ),
+            recommended_next_action=recommended_next_action if mode == LIVE_CODEX_TESTS_ONLY_MODE else None,
+            stale_patch_recovery=stale_patch_recovery,
         )
         raise RuntimeError(f"Approved patch no longer applies cleanly; task remains in review: {preflight_path}")
 

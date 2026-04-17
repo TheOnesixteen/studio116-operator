@@ -48,6 +48,17 @@ def git_diff(*, worktree_path: Path) -> CommandResult:
     )
 
 
+def git_diff_against_ref(*, repo_path: Path, base_ref: str, target_paths: list[str]) -> CommandResult:
+    command = ["git", "-C", str(repo_path), "diff", "--no-ext-diff", base_ref, "--", *target_paths]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
 def git_changed_files(*, worktree_path: Path) -> CommandResult:
     command = ["git", "-C", str(worktree_path), "diff", "--name-only"]
     completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
