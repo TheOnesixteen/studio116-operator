@@ -54,7 +54,7 @@ def _prepare_review_task(
     target_paths: list[str],
     changed_stdout: str,
     diff_stdout: str,
-    title: str = "Phase 2.4a tests task",
+    title: str = "Phase 2.4b tests task",
     file_content: str = "import unittest\n\nclass SafeTest(unittest.TestCase):\n    def test_safe(self):\n        self.assertTrue(True)\n",
 ) -> str:
     changed_paths = [line.strip() for line in changed_stdout.splitlines() if line.strip()]
