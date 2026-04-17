@@ -124,7 +124,7 @@ def create_live_codex_tests_only_task(
         goal=goal,
         requested_by=requested_by,
         constraints=[
-            "Phase 2.4a live Codex tests-only slice",
+            "Phase 2.4b live Codex tests-only slice",
             f"Target policy-whitelisted tests path(s) only: {', '.join(target_paths)}",
             "One writable live Codex task at a time",
             "Use isolated worktree only",
@@ -157,5 +157,5 @@ def create_live_codex_tests_only_task(
             "read_only": False,
             "target_paths": target_paths,
         },
-        metadata={"phase": "2.4a", "live_codex_tests_whitelist": True},
+        metadata={"phase": "2.4b", "live_codex_tests_whitelist": True, "test_content_hardening": True},
     )

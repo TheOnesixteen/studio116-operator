@@ -78,6 +78,26 @@ def _artifact_data(task_view: dict, artifact_type: str) -> dict:
 
 
 class Phase24bTestsContentHardeningTests(unittest.TestCase):
+    def test_tests_only_task_metadata_and_constraints_are_phase24b(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-phase24b-task-metadata")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            task_id = create_live_codex_tests_only_task(
+                project="operator",
+                title="Phase 2.4b metadata",
+                goal="Make a tests-only change",
+                target_paths=[TEST_PATH],
+            )
+            task = show_task(task_id)["task"]
+
+        constraints = json.loads(task["constraints_json"])
+        metadata = json.loads(task["metadata_json"])
+        self.assertIn("Phase 2.4b live Codex tests-only slice", constraints)
+        self.assertNotIn("Phase 2.4a live Codex tests-only slice", constraints)
+        self.assertEqual(metadata["phase"], "2.4b")
+        self.assertTrue(metadata["live_codex_tests_whitelist"])
+        self.assertTrue(metadata["test_content_hardening"])
+
     def test_content_hardening_allows_simple_unittest_content(self):
         checks = _content_checks_for(SAFE_CONTENT)
         self.assertEqual(_failed_check_names(checks), set())
