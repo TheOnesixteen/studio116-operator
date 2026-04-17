@@ -33,6 +33,7 @@ from app.policies import (
     live_codex_tests_only_preflight_checks,
     validate_live_codex_paths_for_mode,
     validate_live_codex_changed_files_for_mode,
+    validate_live_codex_tests_only_content,
 )
 from app.state_manager import assert_transition, validate_status
 from tools.git_tools import (
@@ -497,6 +498,12 @@ def _phase22_changed_file_checks(changed_files: list[str], mode: str) -> tuple[l
     return checks, passed
 
 
+def _live_codex_content_checks(worktree_path: Path, changed_files: list[str], mode: str) -> list[dict]:
+    if mode != LIVE_CODEX_TESTS_ONLY_MODE:
+        return []
+    return validate_live_codex_tests_only_content(worktree_path, changed_files)
+
+
 def _write_promotion_preflight(
     *,
     task: dict[str, Any],
@@ -558,7 +565,10 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     mode = _live_codex_mode_for_task(task)
     mode_label = _live_codex_mode_label_for_task(task)
     checks, changed_files_passed = _phase22_changed_file_checks(changed_files, mode)
-    if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files_passed:
+    content_checks = _live_codex_content_checks(worktree_path, changed_files, mode)
+    checks = [*checks, *content_checks]
+    content_checks_passed = all(check["passed"] for check in content_checks)
+    if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files_passed or not content_checks_passed:
         preflight_path = _write_promotion_preflight(
             task=task,
             run=run,
@@ -1099,6 +1109,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
     record_worker_execution(run_id, "shell_ops", current_head_result)
     changed_files = [line.strip() for line in changed_result.stdout.splitlines() if line.strip()]
     post_run_checks = validate_live_codex_changed_files_for_mode(mode, changed_files)
+    post_run_checks.extend(_live_codex_content_checks(worktree_path, changed_files, mode))
     post_run_checks.append(
         {
             "name": "no_auto_commit_or_merge",

@@ -55,9 +55,20 @@ def _prepare_review_task(
     changed_stdout: str,
     diff_stdout: str,
     title: str = "Phase 2.4a tests task",
+    file_content: str = "import unittest\n\nclass SafeTest(unittest.TestCase):\n    def test_safe(self):\n        self.assertTrue(True)\n",
 ) -> str:
+    changed_paths = [line.strip() for line in changed_stdout.splitlines() if line.strip()]
+
+    def _codex_success(*, worktree_path, packet_path, timeout_seconds):
+        for changed_path in changed_paths:
+            if changed_path.startswith("tests/"):
+                path = worktree_path / changed_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(file_content, encoding="utf-8")
+        return CommandResult("codex exec", "ok", "", 0)
+
     with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
-        "app.task_engine.run_live_tests_only", return_value=CommandResult("codex exec", "ok", "", 0)
+        "app.task_engine.run_live_tests_only", side_effect=_codex_success
     ), mock.patch("app.task_engine.git_diff", return_value=CommandResult("git diff", diff_stdout, "", 0)), mock.patch(
         "app.task_engine.git_changed_files", return_value=CommandResult("git diff --name-only", changed_stdout, "", 0)
     ), mock.patch(

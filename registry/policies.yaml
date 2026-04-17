@@ -18,6 +18,72 @@ live_codex_docs_only_allowed_targets:
 live_codex_tests_only_allowed_targets:
   - tests/test_*.py
 
+live_codex_tests_only_disallowed_import_roots:
+  - boto3
+  - botocore
+  - docker
+  - fabric
+  - ftplib
+  - http
+  - kubernetes
+  - paramiko
+  - requests
+  - socket
+  - smtplib
+  - telnetlib
+  - urllib
+
+live_codex_tests_only_disallowed_calls:
+  - os.popen
+  - os.system
+  - pty.spawn
+  - subprocess.call
+  - subprocess.check_call
+  - subprocess.check_output
+  - subprocess.Popen
+  - subprocess.run
+
+live_codex_tests_only_disallowed_string_tokens:
+  - curl
+  - deploy-combs
+  - deploy-kairoke
+  - deploy-katie
+  - deploy-kensington
+  - deploy-robin
+  - deploy-rustyo
+  - deploy-ski
+  - deploy-studio
+  - deploy-trouper
+  - docker
+  - docker compose
+  - docker-compose
+  - ssh
+  - systemctl
+  - wget
+
+live_codex_tests_only_disallowed_path_prefixes:
+  - /etc/
+  - /home/
+  - /opt/
+  - /root/
+  - /srv/
+  - /usr/
+  - /var/
+
+live_codex_tests_only_allowed_path_prefixes:
+  - /root/Projects/studio116-operator
+  - /tmp/
+
+live_codex_tests_only_disallowed_host_literals:
+  - 159.65.187.30
+  - combsplumbing.com
+  - do.116.studio
+  - kairoke.com
+  - kdomusic.com
+  - kensingtonpool.com
+  - robinolinger.com
+  - skilagrange.com
+
 requires_approval:
   - deploy_to_production
   - systemctl_restart

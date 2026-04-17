@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -79,6 +80,68 @@ LIVE_CODEX_TIMEOUT_SECONDS = 600
 LIVE_CODEX_MAX_CHANGED_FILES = 5
 LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION = "live_codex_docs_only_allowed_targets"
 LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION = "live_codex_tests_only_allowed_targets"
+LIVE_CODEX_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS_SECTION = "live_codex_tests_only_disallowed_import_roots"
+LIVE_CODEX_TESTS_ONLY_DISALLOWED_CALLS_SECTION = "live_codex_tests_only_disallowed_calls"
+LIVE_CODEX_TESTS_ONLY_DISALLOWED_STRING_TOKENS_SECTION = "live_codex_tests_only_disallowed_string_tokens"
+LIVE_CODEX_TESTS_ONLY_DISALLOWED_PATH_PREFIXES_SECTION = "live_codex_tests_only_disallowed_path_prefixes"
+LIVE_CODEX_TESTS_ONLY_ALLOWED_PATH_PREFIXES_SECTION = "live_codex_tests_only_allowed_path_prefixes"
+LIVE_CODEX_TESTS_ONLY_DISALLOWED_HOST_LITERALS_SECTION = "live_codex_tests_only_disallowed_host_literals"
+
+DEFAULT_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS = {
+    "boto3",
+    "botocore",
+    "docker",
+    "fabric",
+    "ftplib",
+    "http",
+    "kubernetes",
+    "paramiko",
+    "requests",
+    "socket",
+    "smtplib",
+    "telnetlib",
+    "urllib",
+}
+DEFAULT_TESTS_ONLY_DISALLOWED_CALLS = {
+    "os.popen",
+    "os.system",
+    "pty.spawn",
+    "subprocess.call",
+    "subprocess.check_call",
+    "subprocess.check_output",
+    "subprocess.Popen",
+    "subprocess.run",
+}
+DEFAULT_TESTS_ONLY_DISALLOWED_STRING_TOKENS = {
+    "curl ",
+    "deploy-combs",
+    "deploy-kairoke",
+    "deploy-katie",
+    "deploy-kensington",
+    "deploy-robin",
+    "deploy-rustyo",
+    "deploy-ski",
+    "deploy-studio",
+    "deploy-trouper",
+    "docker ",
+    "docker compose",
+    "docker-compose",
+    "ssh ",
+    "systemctl",
+    "wget ",
+}
+DEFAULT_TESTS_ONLY_DISALLOWED_PATH_PREFIXES = {"/etc/", "/home/", "/opt/", "/root/", "/srv/", "/usr/", "/var/"}
+DEFAULT_TESTS_ONLY_ALLOWED_PATH_PREFIXES = {"/root/Projects/studio116-operator", "/tmp/"}
+DEFAULT_TESTS_ONLY_DISALLOWED_HOST_LITERALS = {
+    "159.65.187.30",
+    "combsplumbing.com",
+    "do.116.studio",
+    "kairoke.com",
+    "kdomusic.com",
+    "kensingtonpool.com",
+    "robinolinger.com",
+    "skilagrange.com",
+}
 
 
 def is_forbidden_live_codex_path(path: str) -> bool:
@@ -112,6 +175,50 @@ def live_codex_docs_only_allowed_targets() -> list[str]:
 def live_codex_tests_only_allowed_targets() -> list[str]:
     configured = _read_yaml_list(get_settings().policies_path, LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION)
     return sorted(configured) if configured else list(LIVE_CODEX_TESTS_ONLY_TARGETS)
+
+
+def _policy_list(section: str, default: set[str]) -> list[str]:
+    configured = _read_yaml_list(get_settings().policies_path, section)
+    return sorted(configured) if configured else sorted(default)
+
+
+def live_codex_tests_only_disallowed_import_roots() -> list[str]:
+    return _policy_list(
+        LIVE_CODEX_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS_SECTION,
+        DEFAULT_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS,
+    )
+
+
+def live_codex_tests_only_disallowed_calls() -> list[str]:
+    return _policy_list(LIVE_CODEX_TESTS_ONLY_DISALLOWED_CALLS_SECTION, DEFAULT_TESTS_ONLY_DISALLOWED_CALLS)
+
+
+def live_codex_tests_only_disallowed_string_tokens() -> list[str]:
+    return _policy_list(
+        LIVE_CODEX_TESTS_ONLY_DISALLOWED_STRING_TOKENS_SECTION,
+        DEFAULT_TESTS_ONLY_DISALLOWED_STRING_TOKENS,
+    )
+
+
+def live_codex_tests_only_disallowed_path_prefixes() -> list[str]:
+    return _policy_list(
+        LIVE_CODEX_TESTS_ONLY_DISALLOWED_PATH_PREFIXES_SECTION,
+        DEFAULT_TESTS_ONLY_DISALLOWED_PATH_PREFIXES,
+    )
+
+
+def live_codex_tests_only_allowed_path_prefixes() -> list[str]:
+    return _policy_list(
+        LIVE_CODEX_TESTS_ONLY_ALLOWED_PATH_PREFIXES_SECTION,
+        DEFAULT_TESTS_ONLY_ALLOWED_PATH_PREFIXES,
+    )
+
+
+def live_codex_tests_only_disallowed_host_literals() -> list[str]:
+    return _policy_list(
+        LIVE_CODEX_TESTS_ONLY_DISALLOWED_HOST_LITERALS_SECTION,
+        DEFAULT_TESTS_ONLY_DISALLOWED_HOST_LITERALS,
+    )
 
 
 def live_codex_allowed_targets_for_mode(mode: str) -> list[str]:
@@ -377,6 +484,137 @@ def validate_live_codex_tests_only_changed_files(changed_files: list[str]) -> li
         },
     ]
     return checks + path_checks
+
+
+def _import_root(module_name: str) -> str:
+    return module_name.split(".", 1)[0]
+
+
+def _call_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _call_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _string_literals(tree: ast.AST) -> list[str]:
+    values = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            values.append(node.value)
+    return values
+
+
+def _path_literal_is_allowed(literal: str, allowed_prefixes: list[str]) -> bool:
+    return any(literal.startswith(prefix) for prefix in allowed_prefixes)
+
+
+def validate_live_codex_tests_only_content(worktree_path: Path, changed_files: list[str]) -> list[dict]:
+    path_checks = validate_live_codex_tests_only_paths(changed_files)
+    path_checks_passed = all(check["passed"] for check in path_checks)
+    disallowed_import_roots = set(live_codex_tests_only_disallowed_import_roots())
+    disallowed_calls = set(live_codex_tests_only_disallowed_calls())
+    disallowed_string_tokens = live_codex_tests_only_disallowed_string_tokens()
+    disallowed_path_prefixes = live_codex_tests_only_disallowed_path_prefixes()
+    allowed_path_prefixes = live_codex_tests_only_allowed_path_prefixes()
+    disallowed_host_literals = live_codex_tests_only_disallowed_host_literals()
+
+    missing_files: list[str] = []
+    syntax_errors: list[dict] = []
+    disallowed_imports: list[dict] = []
+    disallowed_call_hits: list[dict] = []
+    disallowed_string_hits: list[dict] = []
+    disallowed_path_hits: list[dict] = []
+    disallowed_host_hits: list[dict] = []
+
+    if path_checks_passed:
+        for changed_file in changed_files:
+            file_path = worktree_path / changed_file
+            if not file_path.exists():
+                missing_files.append(changed_file)
+                continue
+            try:
+                source = file_path.read_text(encoding="utf-8")
+                tree = ast.parse(source, filename=changed_file)
+            except SyntaxError as exc:
+                syntax_errors.append({"path": changed_file, "line": exc.lineno, "message": exc.msg})
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root = _import_root(alias.name)
+                        if root in disallowed_import_roots:
+                            disallowed_imports.append({"path": changed_file, "module": alias.name, "line": node.lineno})
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    root = _import_root(node.module)
+                    if root in disallowed_import_roots:
+                        disallowed_imports.append({"path": changed_file, "module": node.module, "line": node.lineno})
+                elif isinstance(node, ast.Call):
+                    call_name = _call_name(node.func)
+                    if call_name in disallowed_calls:
+                        disallowed_call_hits.append({"path": changed_file, "call": call_name, "line": node.lineno})
+
+            for literal in _string_literals(tree):
+                lowered = literal.lower()
+                for token in disallowed_string_tokens:
+                    if token.lower() in lowered:
+                        disallowed_string_hits.append({"path": changed_file, "token": token, "literal": literal})
+                for prefix in disallowed_path_prefixes:
+                    if literal.startswith(prefix) and not _path_literal_is_allowed(literal, allowed_path_prefixes):
+                        disallowed_path_hits.append({"path": changed_file, "prefix": prefix, "literal": literal})
+                for host in disallowed_host_literals:
+                    if host.lower() in lowered:
+                        disallowed_host_hits.append({"path": changed_file, "host": host, "literal": literal})
+
+    return [
+        {
+            "name": "test_content_paths_are_valid",
+            "passed": path_checks_passed,
+            "details": {"changed_files": changed_files},
+        },
+        {
+            "name": "test_content_files_exist",
+            "passed": not missing_files,
+            "details": {"missing_files": missing_files},
+        },
+        {
+            "name": "test_content_is_python_parseable",
+            "passed": not syntax_errors,
+            "details": {"syntax_errors": syntax_errors},
+        },
+        {
+            "name": "test_content_imports_are_allowed",
+            "passed": not disallowed_imports,
+            "details": {"disallowed_imports": disallowed_imports, "disallowed_import_roots": sorted(disallowed_import_roots)},
+        },
+        {
+            "name": "test_content_calls_are_allowed",
+            "passed": not disallowed_call_hits,
+            "details": {"disallowed_calls": disallowed_call_hits, "blocked_calls": sorted(disallowed_calls)},
+        },
+        {
+            "name": "test_content_has_no_live_command_literals",
+            "passed": not disallowed_string_hits,
+            "details": {"disallowed_strings": disallowed_string_hits, "blocked_tokens": disallowed_string_tokens},
+        },
+        {
+            "name": "test_content_has_no_production_path_literals",
+            "passed": not disallowed_path_hits,
+            "details": {
+                "disallowed_paths": disallowed_path_hits,
+                "blocked_prefixes": disallowed_path_prefixes,
+                "allowed_prefixes": allowed_path_prefixes,
+            },
+        },
+        {
+            "name": "test_content_has_no_live_host_literals",
+            "passed": not disallowed_host_hits,
+            "details": {"disallowed_hosts": disallowed_host_hits, "blocked_hosts": disallowed_host_literals},
+        },
+    ]
 
 
 def validate_live_codex_changed_files_for_mode(mode: str, changed_files: list[str]) -> list[dict]:
