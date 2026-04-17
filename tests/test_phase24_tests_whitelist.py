@@ -78,6 +78,19 @@ def _artifact_data(task_view: dict, artifact_type: str) -> dict:
     return json.loads(Path(artifact["path"]).read_text(encoding="utf-8"))
 
 
+def _all_labels_messages_and_summaries(task_view: dict) -> str:
+    values = []
+    values.extend(artifact["label"] for artifact in task_view["artifacts"])
+    values.extend(event["message"] for event in task_view["events"])
+    for artifact in task_view["artifacts"]:
+        path = Path(artifact["path"])
+        if path.suffix == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if "summary" in data:
+                values.append(data["summary"])
+    return "\n".join(values)
+
+
 class Phase24TestsWhitelistTests(unittest.TestCase):
     def test_tests_whitelist_defaults_to_tests_pattern_if_policy_missing(self):
         with mock.patch("app.policies._read_yaml_list", return_value=set()):
@@ -185,6 +198,13 @@ class Phase24TestsWhitelistTests(unittest.TestCase):
 
         self.assertEqual(approved["status"], "done")
         self.assertEqual(task_view["task"]["status"], "done")
+        wording = _all_labels_messages_and_summaries(task_view)
+        self.assertIn("tests-only", wording)
+        self.assertNotIn("docs diff", wording)
+        self.assertNotIn("docs patch", wording)
+        self.assertNotIn("Phase 2.2 promotion", wording)
+        self.assertNotIn("Phase 2.3 approved", wording)
+        self.assertNotIn("Phase 2.3 rollback", wording)
 
     def test_approve_blocks_non_whitelisted_changed_file_and_remains_in_review(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-phase24-approve-block")
@@ -229,6 +249,12 @@ class Phase24TestsWhitelistTests(unittest.TestCase):
         restore.assert_called_once()
         self.assertEqual(restore.call_args.kwargs["target_path"], "tests/test_phase24_tests_whitelist.py")
         self.assertTrue(summary["discarded"])
+        wording = _all_labels_messages_and_summaries(task_view)
+        self.assertIn("tests-only", wording)
+        self.assertNotIn("docs diff", wording)
+        self.assertNotIn("docs patch", wording)
+        self.assertNotIn("Phase 2.2 discard", wording)
+        self.assertNotIn("Phase 2.3 rejected", wording)
 
 
 if __name__ == "__main__":

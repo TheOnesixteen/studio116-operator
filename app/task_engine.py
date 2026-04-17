@@ -318,10 +318,11 @@ def approve_task(task_id: str) -> dict[str, Any]:
                 level="warning",
             )
             raise
-    transition_task(task_id, "done", message="Rusty approved and promoted the reviewed docs diff")
+    approved_message = f"Rusty approved and promoted the {_reviewed_diff_description(task)}"
+    transition_task(task_id, "done", message=approved_message)
     record_event(
         "task_approved",
-        "Rusty approved and promoted the reviewed docs diff",
+        approved_message,
         task_id=task_id,
         run_id=run["id"],
         metadata={"promotion_summary_path": result["promotion_summary_path"]},
@@ -356,10 +357,11 @@ def reject_task(task_id: str) -> dict[str, Any]:
                 level="warning",
             )
             raise
-    transition_task(task_id, "canceled", message="Rusty rejected and discarded the reviewed docs diff")
+    rejected_message = f"Rusty rejected and discarded the {_reviewed_diff_description(task)}"
+    transition_task(task_id, "canceled", message=rejected_message)
     record_event(
         "task_rejected",
-        "Rusty rejected and discarded the reviewed docs diff",
+        rejected_message,
         task_id=task_id,
         run_id=run["id"],
         metadata={"discard_summary_path": result["discard_summary_path"]},
@@ -481,6 +483,14 @@ def _live_codex_mode_for_task(task: dict[str, Any]) -> str:
     return routing.get("delegation_mode") or LIVE_CODEX_DOCS_ONLY_MODE
 
 
+def _live_codex_mode_label_for_task(task: dict[str, Any]) -> str:
+    return "tests-only" if _live_codex_mode_for_task(task) == LIVE_CODEX_TESTS_ONLY_MODE else "docs-only"
+
+
+def _reviewed_diff_description(task: dict[str, Any]) -> str:
+    return f"reviewed Codex {_live_codex_mode_label_for_task(task)} diff"
+
+
 def _phase22_changed_file_checks(changed_files: list[str], mode: str) -> tuple[list[dict], bool]:
     checks = validate_live_codex_changed_files_for_mode(mode, changed_files)
     passed = all(check["passed"] for check in checks)
@@ -523,7 +533,7 @@ def _write_promotion_preflight(
         task_id=task["id"],
         run_id=run["id"],
         artifact_type="promotion_preflight",
-        label="Phase 2.2 promotion preflight",
+        label="Live Codex promotion preflight",
         filename="promotion_preflight.json",
         data={
             "summary": summary,
@@ -546,6 +556,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     record_worker_execution(run["id"], "shell_ops", changed_result)
     changed_files = _changed_files_from_result(changed_result)
     mode = _live_codex_mode_for_task(task)
+    mode_label = _live_codex_mode_label_for_task(task)
     checks, changed_files_passed = _phase22_changed_file_checks(changed_files, mode)
     if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files_passed:
         preflight_path = _write_promotion_preflight(
@@ -555,15 +566,15 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             changed_files=changed_files,
             checks=checks,
             passed=False,
-            summary="Phase 2.2 promotion preflight failed before patch apply check",
+            summary="Live Codex promotion preflight failed before patch apply check",
         )
-        raise RuntimeError(f"Phase 2.2 promotion preflight failed; task remains in review: {preflight_path}")
+        raise RuntimeError(f"Live Codex promotion preflight failed; task remains in review: {preflight_path}")
 
     approved_patch_path = write_text_artifact(
         task_id=task["id"],
         run_id=run["id"],
         artifact_type="approved_patch",
-        label="Phase 2.3 approved docs patch",
+        label=f"Live Codex approved {mode_label} patch",
         filename="approved_patch.patch",
         content=diff_result.stdout,
     )
@@ -577,14 +588,14 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             changed_files=changed_files,
             checks=checks,
             passed=False,
-            summary="Phase 2.2 promotion preflight failed while generating rollback patch",
+            summary="Live Codex promotion preflight failed while generating rollback patch",
         )
         raise RuntimeError(f"Failed to generate rollback patch; task remains in review: {preflight_path}")
     rollback_patch_path = write_text_artifact(
         task_id=task["id"],
         run_id=run["id"],
         artifact_type="rollback_patch",
-        label="Phase 2.3 rollback patch for promoted docs diff",
+        label=f"Live Codex rollback patch for promoted {mode_label} diff",
         filename="rollback_patch.patch",
         content=rollback_result.stdout,
     )
@@ -599,7 +610,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             checks=checks,
             apply_check_result=apply_check_result,
             passed=False,
-            summary="Phase 2.2 promotion blocked because the approved patch no longer applies cleanly",
+            summary="Live Codex promotion blocked because the approved patch no longer applies cleanly",
         )
         raise RuntimeError(f"Approved patch no longer applies cleanly; task remains in review: {preflight_path}")
 
@@ -611,7 +622,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
         checks=checks,
         apply_check_result=apply_check_result,
         passed=True,
-        summary="Phase 2.2 promotion preflight passed",
+        summary="Live Codex promotion preflight passed",
     )
     canonical_head_before = git_head(worktree_path=settings.repo_root)
     record_worker_execution(run["id"], "shell_ops", canonical_head_before)
@@ -622,10 +633,10 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             task_id=task["id"],
             run_id=run["id"],
             artifact_type="promotion_summary",
-            label="Phase 2.2 failed promotion summary",
+            label="Live Codex failed promotion summary",
             filename="promotion_summary.json",
             data={
-                "summary": "Approved docs patch apply failed after a successful apply check; task remains in review",
+                "summary": f"Approved {mode_label} patch apply failed after a successful apply check; task remains in review",
                 "promoted": False,
                 "changed_files": changed_files,
                 "canonical_repo_path": str(settings.repo_root),
@@ -653,10 +664,10 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
         task_id=task["id"],
         run_id=run["id"],
         artifact_type="promotion_summary",
-        label="Phase 2.2 promotion summary",
+        label="Live Codex promotion summary",
         filename="promotion_summary.json",
         data={
-            "summary": "Approved docs diff promoted to the canonical working tree without commit, merge, or push",
+            "summary": f"Approved {mode_label} diff promoted to the canonical working tree without commit, merge, or push",
             "promoted": True,
             "changed_files": changed_files,
             "canonical_repo_path": str(settings.repo_root),
@@ -675,7 +686,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     )
     record_event(
         "promotion_succeeded",
-        "Promoted approved docs diff to canonical working tree without commit, merge, or push",
+        f"Promoted approved {mode_label} diff to canonical working tree without commit, merge, or push",
         task_id=task["id"],
         run_id=run["id"],
         metadata={"promotion_summary_path": str(promotion_summary_path)},
@@ -696,12 +707,13 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     record_worker_execution(run["id"], "shell_ops", changed_result)
     changed_files = _changed_files_from_result(changed_result)
     mode = _live_codex_mode_for_task(task)
+    mode_label = _live_codex_mode_label_for_task(task)
     checks, changed_files_passed = _phase22_changed_file_checks(changed_files, mode)
     rejected_patch_path = write_text_artifact(
         task_id=task["id"],
         run_id=run["id"],
         artifact_type="rejected_patch",
-        label="Phase 2.3 rejected docs patch",
+        label=f"Live Codex rejected {mode_label} patch",
         filename="rejected_patch.patch",
         content=diff_result.stdout,
     )
@@ -710,10 +722,10 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             task_id=task["id"],
             run_id=run["id"],
             artifact_type="discard_summary",
-            label="Phase 2.2 discard summary",
+            label="Live Codex discard summary",
             filename="discard_summary.json",
             data={
-                "summary": "Rejected diff discard failed before restore because changed files were not policy-whitelisted docs targets",
+                "summary": "Rejected diff discard failed before restore because changed files were not policy-whitelisted targets",
                 "discarded": False,
                 "changed_files": changed_files,
                 "checks": checks,
@@ -722,7 +734,7 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
                 "canonical_repo_touched": False,
             },
         )
-        raise RuntimeError(f"Phase 2.2 discard preflight failed; task remains in review: {discard_summary_path}")
+        raise RuntimeError(f"Live Codex discard preflight failed; task remains in review: {discard_summary_path}")
 
     restore_results = []
     for changed_file in changed_files:
@@ -735,10 +747,10 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             task_id=task["id"],
             run_id=run["id"],
             artifact_type="discard_summary",
-            label="Phase 2.2 discard summary",
+            label="Live Codex discard summary",
             filename="discard_summary.json",
             data={
-                "summary": "Rejected docs diff discard failed during git restore",
+                "summary": f"Rejected {mode_label} diff discard failed during git restore",
                 "discarded": False,
                 "changed_files": changed_files,
                 "checks": checks,
@@ -753,16 +765,16 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
                 "canonical_repo_touched": False,
             },
         )
-        raise RuntimeError(f"Phase 2.2 discard failed; task remains in review: {discard_summary_path}")
+        raise RuntimeError(f"Live Codex discard failed; task remains in review: {discard_summary_path}")
 
     discard_summary_path = write_json_artifact(
         task_id=task["id"],
         run_id=run["id"],
         artifact_type="discard_summary",
-        label="Phase 2.2 discard summary",
+        label="Live Codex discard summary",
         filename="discard_summary.json",
         data={
-            "summary": "Rejected docs diff discarded from delegated worktree; artifacts and worktree preserved",
+            "summary": f"Rejected {mode_label} diff discarded from delegated worktree; artifacts and worktree preserved",
             "discarded": True,
             "changed_files": changed_files,
             "checks": checks,
@@ -783,7 +795,7 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     )
     record_event(
         "discard_succeeded",
-        "Rejected docs diff discarded from delegated worktree; artifacts and worktree preserved",
+        f"Rejected {mode_label} diff discarded from delegated worktree; artifacts and worktree preserved",
         task_id=task["id"],
         run_id=run["id"],
         metadata={"discard_summary_path": str(discard_summary_path)},
