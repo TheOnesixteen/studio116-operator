@@ -74,8 +74,10 @@ def assert_phase1_allowed(action: str) -> None:
 
 LIVE_CODEX_DOCS_ONLY_MODE = "live_codex_docs_only"
 LIVE_CODEX_TESTS_ONLY_MODE = "live_codex_tests_only"
+LIVE_CODEX_POLICY_FILE_ONLY_MODE = "live_codex_policy_file_only"
 LIVE_CODEX_DOCS_ONLY_TARGETS = ["README.md"]
 LIVE_CODEX_TESTS_ONLY_TARGETS = ["tests/test_*.py"]
+LIVE_CODEX_POLICY_FILE_ONLY_TARGETS = ["app/policies.py"]
 LIVE_CODEX_TIMEOUT_SECONDS = 600
 LIVE_CODEX_MAX_CHANGED_FILES = 5
 LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION = "live_codex_docs_only_allowed_targets"
@@ -86,6 +88,10 @@ LIVE_CODEX_TESTS_ONLY_DISALLOWED_STRING_TOKENS_SECTION = "live_codex_tests_only_
 LIVE_CODEX_TESTS_ONLY_DISALLOWED_PATH_PREFIXES_SECTION = "live_codex_tests_only_disallowed_path_prefixes"
 LIVE_CODEX_TESTS_ONLY_ALLOWED_PATH_PREFIXES_SECTION = "live_codex_tests_only_allowed_path_prefixes"
 LIVE_CODEX_TESTS_ONLY_DISALLOWED_HOST_LITERALS_SECTION = "live_codex_tests_only_disallowed_host_literals"
+LIVE_CODEX_POLICY_FILE_ALLOWED_TARGETS_SECTION = "live_codex_policy_file_allowed_targets"
+LIVE_CODEX_POLICY_FILE_DISALLOWED_IMPORT_ROOTS_SECTION = "live_codex_policy_file_disallowed_import_roots"
+LIVE_CODEX_POLICY_FILE_DISALLOWED_CALLS_SECTION = "live_codex_policy_file_disallowed_calls"
+LIVE_CODEX_POLICY_FILE_REQUIRED_SYMBOLS_SECTION = "live_codex_policy_file_required_symbols"
 
 DEFAULT_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS = {
     "boto3",
@@ -142,6 +148,31 @@ DEFAULT_TESTS_ONLY_DISALLOWED_HOST_LITERALS = {
     "robinolinger.com",
     "skilagrange.com",
 }
+DEFAULT_POLICY_FILE_DISALLOWED_IMPORT_ROOTS = DEFAULT_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS | {"shutil", "subprocess"}
+DEFAULT_POLICY_FILE_DISALLOWED_CALLS = DEFAULT_TESTS_ONLY_DISALLOWED_CALLS | {
+    "os.remove",
+    "os.removedirs",
+    "os.rmdir",
+    "shutil.rmtree",
+    "unlink",
+    "rmdir",
+}
+DEFAULT_POLICY_FILE_REQUIRED_SYMBOLS = {
+    "BLOCKED_PHASE1_ACTIONS",
+    "LIVE_CODEX_DOCS_ONLY_MODE",
+    "LIVE_CODEX_TESTS_ONLY_MODE",
+    "LIVE_CODEX_POLICY_FILE_ONLY_MODE",
+    "LIVE_CODEX_MAX_CHANGED_FILES",
+    "READ_ONLY_ACTIONS",
+    "_read_yaml_list",
+    "assert_phase1_allowed",
+    "is_forbidden_live_codex_path",
+    "live_codex_allowed_targets_for_mode",
+    "validate_live_codex_changed_files_for_mode",
+    "validate_live_codex_paths_for_mode",
+    "validate_live_codex_policy_file_content",
+    "validate_live_codex_tests_only_content",
+}
 
 
 def is_forbidden_live_codex_path(path: str) -> bool:
@@ -175,6 +206,11 @@ def live_codex_docs_only_allowed_targets() -> list[str]:
 def live_codex_tests_only_allowed_targets() -> list[str]:
     configured = _read_yaml_list(get_settings().policies_path, LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION)
     return sorted(configured) if configured else list(LIVE_CODEX_TESTS_ONLY_TARGETS)
+
+
+def live_codex_policy_file_allowed_targets() -> list[str]:
+    configured = _read_yaml_list(get_settings().policies_path, LIVE_CODEX_POLICY_FILE_ALLOWED_TARGETS_SECTION)
+    return sorted(configured) if configured else list(LIVE_CODEX_POLICY_FILE_ONLY_TARGETS)
 
 
 def _policy_list(section: str, default: set[str]) -> list[str]:
@@ -221,7 +257,24 @@ def live_codex_tests_only_disallowed_host_literals() -> list[str]:
     )
 
 
+def live_codex_policy_file_disallowed_import_roots() -> list[str]:
+    return _policy_list(
+        LIVE_CODEX_POLICY_FILE_DISALLOWED_IMPORT_ROOTS_SECTION,
+        DEFAULT_POLICY_FILE_DISALLOWED_IMPORT_ROOTS,
+    )
+
+
+def live_codex_policy_file_disallowed_calls() -> list[str]:
+    return _policy_list(LIVE_CODEX_POLICY_FILE_DISALLOWED_CALLS_SECTION, DEFAULT_POLICY_FILE_DISALLOWED_CALLS)
+
+
+def live_codex_policy_file_required_symbols() -> list[str]:
+    return _policy_list(LIVE_CODEX_POLICY_FILE_REQUIRED_SYMBOLS_SECTION, DEFAULT_POLICY_FILE_REQUIRED_SYMBOLS)
+
+
 def live_codex_allowed_targets_for_mode(mode: str) -> list[str]:
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        return live_codex_policy_file_allowed_targets()
     if mode == LIVE_CODEX_TESTS_ONLY_MODE:
         return live_codex_tests_only_allowed_targets()
     return live_codex_docs_only_allowed_targets()
@@ -328,7 +381,50 @@ def validate_live_codex_tests_only_paths(paths: list[str]) -> list[dict]:
     ]
 
 
+def validate_live_codex_policy_file_paths(paths: list[str]) -> list[dict]:
+    allowed_targets = live_codex_policy_file_allowed_targets()
+    return [
+        {
+            "name": "path_count_exactly_1",
+            "passed": len(paths) == 1,
+            "details": {"count": len(paths), "required": 1},
+        },
+        {
+            "name": "paths_are_repo_relative",
+            "passed": all(_path_is_repo_relative(path) for path in paths),
+            "details": {"paths": paths},
+        },
+        {
+            "name": "paths_are_policy_file",
+            "passed": paths == ["app/policies.py"],
+            "details": {"paths": paths},
+        },
+        {
+            "name": "paths_are_policy_allowed",
+            "passed": all(_path_matches_allowed_target(path, allowed_targets) for path in paths),
+            "details": {"paths": paths, "allowed_targets": allowed_targets},
+        },
+        {
+            "name": "no_hidden_files",
+            "passed": all(not (path.startswith(".") or "/." in path) for path in paths),
+            "details": {"paths": paths},
+        },
+        {
+            "name": "no_env_files",
+            "passed": all(not (path.endswith(".env") or path == ".env" or ".env." in path) for path in paths),
+            "details": {"paths": paths},
+        },
+        {
+            "name": "no_deploy_config_system_files",
+            "passed": all(not is_forbidden_live_codex_path(path) for path in paths),
+            "details": {"paths": paths},
+        },
+    ]
+
+
 def validate_live_codex_paths_for_mode(mode: str, paths: list[str]) -> list[dict]:
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        return validate_live_codex_policy_file_paths(paths)
     if mode == LIVE_CODEX_TESTS_ONLY_MODE:
         return validate_live_codex_tests_only_paths(paths)
     return validate_live_codex_docs_only_paths(paths)
@@ -412,6 +508,45 @@ def live_codex_tests_only_preflight_checks(
     return [{"name": name, "passed": bool(passed)} for name, passed in checks] + target_path_checks
 
 
+def live_codex_policy_file_preflight_checks(
+    *,
+    project: str,
+    worker: str,
+    mode: str,
+    target_paths: list[str],
+    repo_root: Path,
+    worktree_path: Path,
+    command_cwd: Path,
+    active_delegated_writer_locks: int,
+    goal: str,
+    constraints: list[str],
+    worktree_ready: bool,
+) -> list[dict]:
+    repo_root = repo_root.resolve()
+    worktree_resolved = worktree_path.resolve()
+    runtime_worktrees = get_settings().worktrees_dir.resolve()
+    goal_blob = goal.lower()
+    target_path_checks = validate_live_codex_policy_file_paths(target_paths)
+    checks = [
+        ("project_is_operator", project == "operator"),
+        ("worker_is_codex", worker == "codex"),
+        ("mode_is_live_codex_policy_file_only", mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE),
+        ("target_paths_are_policy_allowed", all(check["passed"] for check in target_path_checks)),
+        ("repo_root_is_operator_repo", repo_root == get_settings().repo_root.resolve()),
+        ("worktree_under_runtime_worktrees", runtime_worktrees in [worktree_resolved, *worktree_resolved.parents]),
+        ("canonical_checkout_not_cwd", command_cwd.resolve() != repo_root),
+        ("single_live_codex_writer_available", active_delegated_writer_locks == 0),
+        ("no_package_install_requested", not any(token in goal_blob for token in ("npm install", "pip install", "apt install", "brew install"))),
+        ("no_network_dependent_work", not any(token in goal_blob for token in ("curl ", "wget ", "http://", "https://", "network"))),
+        ("no_auto_commit_merge_push", not any(token in goal_blob for token in ("git commit", "git merge", "git push"))),
+        ("timeout_is_10_minutes", LIVE_CODEX_TIMEOUT_SECONDS == 600),
+        ("max_changed_files_is_1", len(target_paths) == 1),
+        ("worktree_exists_or_created", worktree_ready),
+        ("preflight_artifact_written", True),
+    ]
+    return [{"name": name, "passed": bool(passed)} for name, passed in checks] + target_path_checks
+
+
 def validate_live_codex_changed_files(changed_files: list[str]) -> list[dict]:
     path_checks = validate_live_codex_docs_only_paths(changed_files)
     checks = [
@@ -486,6 +621,43 @@ def validate_live_codex_tests_only_changed_files(changed_files: list[str]) -> li
     return checks + path_checks
 
 
+def validate_live_codex_policy_file_changed_files(changed_files: list[str]) -> list[dict]:
+    path_checks = validate_live_codex_policy_file_paths(changed_files)
+    checks = [
+        {
+            "name": "changed_file_count_exactly_1",
+            "passed": len(changed_files) == 1,
+            "details": {"count": len(changed_files), "required": 1},
+        },
+        {
+            "name": "changed_files_are_policy_allowed",
+            "passed": all(check["passed"] for check in path_checks),
+            "details": {"changed_files": changed_files, "allowed": live_codex_policy_file_allowed_targets()},
+        },
+        {
+            "name": "no_hidden_files_changed",
+            "passed": all(not (path.startswith(".") or "/." in path) for path in changed_files),
+            "details": {"changed_files": changed_files},
+        },
+        {
+            "name": "no_env_files_changed",
+            "passed": all(not (path.endswith(".env") or path == ".env" or ".env." in path) for path in changed_files),
+            "details": {"changed_files": changed_files},
+        },
+        {
+            "name": "no_deploy_config_system_files_changed",
+            "passed": all(not is_forbidden_live_codex_path(path) for path in changed_files),
+            "details": {"changed_files": changed_files},
+        },
+        {
+            "name": "changed_paths_are_repo_relative",
+            "passed": all(_path_is_repo_relative(path) for path in changed_files),
+            "details": {"changed_files": changed_files},
+        },
+    ]
+    return checks + path_checks
+
+
 def _import_root(module_name: str) -> str:
     return module_name.split(".", 1)[0]
 
@@ -509,6 +681,108 @@ def _string_literals(tree: ast.AST) -> list[str]:
 
 def _path_literal_is_allowed(literal: str, allowed_prefixes: list[str]) -> bool:
     return any(literal.startswith(prefix) for prefix in allowed_prefixes)
+
+
+def _defined_symbols(tree: ast.AST) -> set[str]:
+    symbols: set[str] = set()
+    for node in tree.body if isinstance(tree, ast.Module) else []:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            symbols.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    symbols.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            symbols.add(node.target.id)
+    return symbols
+
+
+def _python_file_content_checks(
+    *,
+    worktree_path: Path,
+    changed_files: list[str],
+    path_checks: list[dict],
+    check_prefix: str,
+    disallowed_import_roots: set[str],
+    disallowed_calls: set[str],
+    required_symbols: set[str] | None = None,
+) -> list[dict]:
+    path_checks_passed = all(check["passed"] for check in path_checks)
+    missing_files: list[str] = []
+    syntax_errors: list[dict] = []
+    disallowed_imports: list[dict] = []
+    disallowed_call_hits: list[dict] = []
+    missing_required_symbols: list[dict] = []
+
+    if path_checks_passed:
+        for changed_file in changed_files:
+            file_path = worktree_path / changed_file
+            if not file_path.exists():
+                missing_files.append(changed_file)
+                continue
+            try:
+                source = file_path.read_text(encoding="utf-8")
+                tree = ast.parse(source, filename=changed_file)
+            except SyntaxError as exc:
+                syntax_errors.append({"path": changed_file, "line": exc.lineno, "message": exc.msg})
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root = _import_root(alias.name)
+                        if root in disallowed_import_roots:
+                            disallowed_imports.append({"path": changed_file, "module": alias.name, "line": node.lineno})
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    root = _import_root(node.module)
+                    if root in disallowed_import_roots:
+                        disallowed_imports.append({"path": changed_file, "module": node.module, "line": node.lineno})
+                elif isinstance(node, ast.Call):
+                    call_name = _call_name(node.func)
+                    if call_name in disallowed_calls:
+                        disallowed_call_hits.append({"path": changed_file, "call": call_name, "line": node.lineno})
+
+            if required_symbols is not None:
+                defined_symbols = _defined_symbols(tree)
+                missing = sorted(required_symbols - defined_symbols)
+                if missing:
+                    missing_required_symbols.append({"path": changed_file, "missing_symbols": missing})
+
+    return [
+        {
+            "name": f"{check_prefix}_paths_are_valid",
+            "passed": path_checks_passed,
+            "details": {"changed_files": changed_files},
+        },
+        {
+            "name": f"{check_prefix}_files_exist",
+            "passed": not missing_files,
+            "details": {"missing_files": missing_files},
+        },
+        {
+            "name": f"{check_prefix}_is_python_parseable",
+            "passed": not syntax_errors,
+            "details": {"syntax_errors": syntax_errors},
+        },
+        {
+            "name": f"{check_prefix}_imports_are_allowed",
+            "passed": not disallowed_imports,
+            "details": {"disallowed_imports": disallowed_imports, "disallowed_import_roots": sorted(disallowed_import_roots)},
+        },
+        {
+            "name": f"{check_prefix}_calls_are_allowed",
+            "passed": not disallowed_call_hits,
+            "details": {"disallowed_calls": disallowed_call_hits, "blocked_calls": sorted(disallowed_calls)},
+        },
+        {
+            "name": f"{check_prefix}_required_symbols_exist",
+            "passed": not missing_required_symbols,
+            "details": {
+                "missing_required_symbols": missing_required_symbols,
+                "required_symbols": sorted(required_symbols or set()),
+            },
+        },
+    ]
 
 
 def validate_live_codex_tests_only_content(worktree_path: Path, changed_files: list[str]) -> list[dict]:
@@ -617,7 +891,21 @@ def validate_live_codex_tests_only_content(worktree_path: Path, changed_files: l
     ]
 
 
+def validate_live_codex_policy_file_content(worktree_path: Path, changed_files: list[str]) -> list[dict]:
+    return _python_file_content_checks(
+        worktree_path=worktree_path,
+        changed_files=changed_files,
+        path_checks=validate_live_codex_policy_file_paths(changed_files),
+        check_prefix="policy_file_content",
+        disallowed_import_roots=set(live_codex_policy_file_disallowed_import_roots()),
+        disallowed_calls=set(live_codex_policy_file_disallowed_calls()),
+        required_symbols=set(live_codex_policy_file_required_symbols()),
+    )
+
+
 def validate_live_codex_changed_files_for_mode(mode: str, changed_files: list[str]) -> list[dict]:
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        return validate_live_codex_policy_file_changed_files(changed_files)
     if mode == LIVE_CODEX_TESTS_ONLY_MODE:
         return validate_live_codex_tests_only_changed_files(changed_files)
     return validate_live_codex_changed_files(changed_files)

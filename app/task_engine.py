@@ -11,8 +11,10 @@ from adapters.claude_code import intended_read_only_command
 from adapters.codex import (
     intended_dry_run_command,
     live_docs_only_command,
+    live_policy_file_command,
     live_tests_only_command,
     run_live_docs_only,
+    run_live_policy_file as run_codex_live_policy_file,
     run_live_tests_only,
 )
 from app.artifact_store import write_json_artifact
@@ -25,14 +27,18 @@ from app.models import HEALTH_STATUSES
 from app.policies import (
     LIVE_CODEX_DOCS_ONLY_MODE,
     LIVE_CODEX_DOCS_ONLY_TARGETS,
+    LIVE_CODEX_POLICY_FILE_ONLY_MODE,
+    LIVE_CODEX_POLICY_FILE_ONLY_TARGETS,
     LIVE_CODEX_TESTS_ONLY_MODE,
     LIVE_CODEX_TESTS_ONLY_TARGETS,
     LIVE_CODEX_TIMEOUT_SECONDS,
     live_codex_allowed_targets_for_mode,
+    live_codex_policy_file_preflight_checks,
     live_codex_preflight_checks,
     live_codex_tests_only_preflight_checks,
     validate_live_codex_paths_for_mode,
     validate_live_codex_changed_files_for_mode,
+    validate_live_codex_policy_file_content,
     validate_live_codex_tests_only_content,
 )
 from app.state_manager import assert_transition, validate_status
@@ -398,7 +404,12 @@ def _latest_review_run(task_id: str) -> dict[str, Any]:
 def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> None:
     routing = _task_json(task, "routing_json", {})
     mode = routing.get("delegation_mode")
-    default_targets = LIVE_CODEX_TESTS_ONLY_TARGETS if mode == LIVE_CODEX_TESTS_ONLY_MODE else LIVE_CODEX_DOCS_ONLY_TARGETS
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        default_targets = LIVE_CODEX_POLICY_FILE_ONLY_TARGETS
+    elif mode == LIVE_CODEX_TESTS_ONLY_MODE:
+        default_targets = LIVE_CODEX_TESTS_ONLY_TARGETS
+    else:
+        default_targets = LIVE_CODEX_DOCS_ONLY_TARGETS
     target_paths = routing.get("target_paths") or routing.get("targets") or default_targets
     if isinstance(target_paths, str):
         target_paths = [target_paths]
@@ -408,7 +419,7 @@ def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> No
         raise PermissionError("Phase 2.2 review loop is limited to delegated tasks")
     if routing.get("worker") != "codex":
         raise PermissionError("Phase 2.2 review loop is limited to worker=codex")
-    if mode not in {LIVE_CODEX_DOCS_ONLY_MODE, LIVE_CODEX_TESTS_ONLY_MODE}:
+    if mode not in {LIVE_CODEX_DOCS_ONLY_MODE, LIVE_CODEX_TESTS_ONLY_MODE, LIVE_CODEX_POLICY_FILE_ONLY_MODE}:
         raise PermissionError("Phase 2.2 review loop is limited to approved live Codex modes")
     if not all(check["passed"] for check in validate_live_codex_paths_for_mode(mode, target_paths)):
         raise PermissionError("Phase 2 review loop is limited to policy-whitelisted live Codex targets")
@@ -486,7 +497,12 @@ def _live_codex_mode_for_task(task: dict[str, Any]) -> str:
 
 
 def _live_codex_mode_label_for_task(task: dict[str, Any]) -> str:
-    return "tests-only" if _live_codex_mode_for_task(task) == LIVE_CODEX_TESTS_ONLY_MODE else "docs-only"
+    mode = _live_codex_mode_for_task(task)
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        return "policy-file"
+    if mode == LIVE_CODEX_TESTS_ONLY_MODE:
+        return "tests-only"
+    return "docs-only"
 
 
 def _reviewed_diff_description(task: dict[str, Any]) -> str:
@@ -500,9 +516,11 @@ def _phase22_changed_file_checks(changed_files: list[str], mode: str) -> tuple[l
 
 
 def _live_codex_content_checks(worktree_path: Path, changed_files: list[str], mode: str) -> list[dict]:
-    if mode != LIVE_CODEX_TESTS_ONLY_MODE:
-        return []
-    return validate_live_codex_tests_only_content(worktree_path, changed_files)
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        return validate_live_codex_policy_file_content(worktree_path, changed_files)
+    if mode == LIVE_CODEX_TESTS_ONLY_MODE:
+        return validate_live_codex_tests_only_content(worktree_path, changed_files)
+    return []
 
 
 def _write_promotion_preflight(
@@ -522,7 +540,15 @@ def _write_promotion_preflight(
         {"name": "task_status_is_review", "passed": task["status"] == "review"},
         {"name": "project_is_operator", "passed": task["project"] == "operator"},
         {"name": "worker_is_codex", "passed": run["worker_name"] == "codex"},
-        {"name": "mode_is_approved_live_codex_mode", "passed": run["run_type"] in {f"delegated_{LIVE_CODEX_DOCS_ONLY_MODE}", f"delegated_{LIVE_CODEX_TESTS_ONLY_MODE}"}},
+        {
+            "name": "mode_is_approved_live_codex_mode",
+            "passed": run["run_type"]
+            in {
+                f"delegated_{LIVE_CODEX_DOCS_ONLY_MODE}",
+                f"delegated_{LIVE_CODEX_TESTS_ONLY_MODE}",
+                f"delegated_{LIVE_CODEX_POLICY_FILE_ONLY_MODE}",
+            },
+        },
         {"name": "worktree_under_runtime_worktrees", "passed": True},
         *checks,
     ]
@@ -559,7 +585,7 @@ def _write_promotion_preflight(
     )
 
 
-def _tests_only_stale_patch_recovery(
+def _live_codex_stale_patch_recovery(
     *,
     settings,
     run: dict[str, Any],
@@ -682,17 +708,17 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     if apply_check_result.exit_code != 0:
         recommended_next_action = (
             f"Reject this stale {mode_label} review, inspect the canonical target changes, "
-            f"and create a fresh live_codex_tests_only task if the change is still wanted."
+            f"and create a fresh {mode} task if the change is still wanted."
         )
         stale_patch_recovery = (
-            _tests_only_stale_patch_recovery(
+            _live_codex_stale_patch_recovery(
                 settings=settings,
                 run=run,
                 worktree_path=worktree_path,
                 changed_files=changed_files,
                 apply_check_result=apply_check_result,
             )
-            if mode == LIVE_CODEX_TESTS_ONLY_MODE
+            if mode in {LIVE_CODEX_TESTS_ONLY_MODE, LIVE_CODEX_POLICY_FILE_ONLY_MODE}
             else None
         )
         preflight_path = _write_promotion_preflight(
@@ -707,7 +733,9 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
                 f"Live Codex {mode_label} promotion blocked because the approved patch no longer applies cleanly. "
                 f"Task remains in review; no force apply, auto-merge, or canonical overwrite was attempted."
             ),
-            recommended_next_action=recommended_next_action if mode == LIVE_CODEX_TESTS_ONLY_MODE else None,
+            recommended_next_action=recommended_next_action
+            if mode in {LIVE_CODEX_TESTS_ONLY_MODE, LIVE_CODEX_POLICY_FILE_ONLY_MODE}
+            else None,
             stale_patch_recovery=stale_patch_recovery,
         )
         raise RuntimeError(f"Approved patch no longer applies cleanly; task remains in review: {preflight_path}")
@@ -1036,12 +1064,21 @@ def run_live_codex_tests_only(task: dict[str, Any], run_id: str) -> dict[str, An
     return _run_live_codex_policy_task(task, run_id, mode=LIVE_CODEX_TESTS_ONLY_MODE)
 
 
+def run_live_codex_policy_file(task: dict[str, Any], run_id: str) -> dict[str, Any]:
+    return _run_live_codex_policy_task(task, run_id, mode=LIVE_CODEX_POLICY_FILE_ONLY_MODE)
+
+
 def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str) -> dict[str, Any]:
     routing = _task_json(task, "routing_json", {})
     constraints = _task_json(task, "constraints_json", [])
     worker = routing.get("worker")
     delegation_mode = routing.get("delegation_mode")
-    default_targets = LIVE_CODEX_TESTS_ONLY_TARGETS if mode == LIVE_CODEX_TESTS_ONLY_MODE else LIVE_CODEX_DOCS_ONLY_TARGETS
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        default_targets = LIVE_CODEX_POLICY_FILE_ONLY_TARGETS
+    elif mode == LIVE_CODEX_TESTS_ONLY_MODE:
+        default_targets = LIVE_CODEX_TESTS_ONLY_TARGETS
+    else:
+        default_targets = LIVE_CODEX_DOCS_ONLY_TARGETS
     target_paths = routing.get("target_paths") or routing.get("targets") or default_targets
     if isinstance(target_paths, str):
         target_paths = [target_paths]
@@ -1055,7 +1092,23 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
     update_run_workspace(run_id, worktree_path=str(worktree_path), branch_name=branch_name)
 
     packet_path = _artifact_path_for(task["id"], run_id, "worker_packet.json")
-    if mode == LIVE_CODEX_TESTS_ONLY_MODE:
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        intended_command = live_policy_file_command(worktree_path=worktree_path, packet_path=packet_path)
+        preflight_checks = live_codex_policy_file_preflight_checks(
+            project=task["project"],
+            worker=worker,
+            mode=delegation_mode,
+            target_paths=target_paths,
+            repo_root=settings.repo_root,
+            worktree_path=worktree_path,
+            command_cwd=worktree_path,
+            active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
+            goal=task["goal"],
+            constraints=constraints,
+            worktree_ready=worktree_ready,
+        )
+        mode_label = "policy-file"
+    elif mode == LIVE_CODEX_TESTS_ONLY_MODE:
         intended_command = live_tests_only_command(worktree_path=worktree_path, packet_path=packet_path)
         preflight_checks = live_codex_tests_only_preflight_checks(
             project=task["project"],
@@ -1147,7 +1200,13 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
         },
     )
 
-    if mode == LIVE_CODEX_TESTS_ONLY_MODE:
+    if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
+        codex_result = run_codex_live_policy_file(
+            worktree_path=worktree_path,
+            packet_path=packet_path,
+            timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
+        )
+    elif mode == LIVE_CODEX_TESTS_ONLY_MODE:
         codex_result = run_live_tests_only(
             worktree_path=worktree_path,
             packet_path=packet_path,

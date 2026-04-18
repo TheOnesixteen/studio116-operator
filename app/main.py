@@ -12,6 +12,7 @@ from app.router import (
     create_delegated_dry_run_task,
     create_health_check_task,
     create_live_codex_docs_only_task,
+    create_live_codex_policy_file_task,
     create_live_codex_tests_only_task,
 )
 from app.scheduler import run_next
@@ -36,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--worker", choices=("codex", "claude_code"))
     create.add_argument(
         "--delegation-mode",
-        choices=("dry_run", "live_codex_docs_only", "live_codex_tests_only"),
+        choices=("dry_run", "live_codex_docs_only", "live_codex_tests_only", "live_codex_policy_file_only"),
         default="dry_run",
     )
     create.add_argument("--read-only", action="store_true")
@@ -99,6 +100,16 @@ def main(argv: list[str] | None = None) -> int:
                     if args.worker != "codex":
                         raise ValueError("live_codex_tests_only requires --worker codex")
                     task_id = create_live_codex_tests_only_task(
+                        project=args.project,
+                        title=args.title,
+                        goal=args.goal,
+                        target_paths=args.target_paths,
+                        requested_by=args.requested_by,
+                    )
+                elif args.delegation_mode == "live_codex_policy_file_only":
+                    if args.worker != "codex":
+                        raise ValueError("live_codex_policy_file_only requires --worker codex")
+                    task_id = create_live_codex_policy_file_task(
                         project=args.project,
                         title=args.title,
                         goal=args.goal,
