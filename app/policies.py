@@ -395,7 +395,7 @@ def validate_live_codex_policy_file_paths(paths: list[str]) -> list[dict]:
             "details": {"paths": paths},
         },
         {
-            "name": "paths_are_policy_file",
+            "name": "paths_are_policy_file_target",
             "passed": paths == ["app/policies.py"],
             "details": {"paths": paths},
         },
