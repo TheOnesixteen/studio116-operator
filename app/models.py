@@ -23,6 +23,7 @@ TERMINAL_TASK_STATES = {"done", "failed", "canceled"}
 HEALTH_STATUSES = ("ok", "warning", "failed")
 
 
+# Shared result containers for operator checks.
 @dataclass(frozen=True)
 class CommandResult:
     command: str
