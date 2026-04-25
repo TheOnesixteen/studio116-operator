@@ -123,6 +123,7 @@ live_codex_policy_file_disallowed_calls:
 live_codex_policy_file_required_symbols:
   - BLOCKED_PHASE1_ACTIONS
   - LIVE_CODEX_DOCS_ONLY_MODE
+  - LIVE_CODEX_MODEL_FILE_ONLY_MODE
   - LIVE_CODEX_TESTS_ONLY_MODE
   - LIVE_CODEX_POLICY_FILE_ONLY_MODE
   - LIVE_CODEX_MAX_CHANGED_FILES
@@ -131,10 +132,59 @@ live_codex_policy_file_required_symbols:
   - assert_phase1_allowed
   - is_forbidden_live_codex_path
   - live_codex_allowed_targets_for_mode
+  - live_codex_model_file_allowed_targets
   - validate_live_codex_changed_files_for_mode
+  - validate_live_codex_model_file_content
   - validate_live_codex_paths_for_mode
   - validate_live_codex_policy_file_content
   - validate_live_codex_tests_only_content
+
+live_codex_model_file_allowed_targets:
+  - app/models.py
+
+live_codex_model_file_disallowed_import_roots:
+  - boto3
+  - botocore
+  - docker
+  - fabric
+  - ftplib
+  - http
+  - kubernetes
+  - paramiko
+  - requests
+  - shutil
+  - socket
+  - smtplib
+  - subprocess
+  - telnetlib
+  - urllib
+
+live_codex_model_file_disallowed_calls:
+  - os.popen
+  - os.remove
+  - os.removedirs
+  - os.rmdir
+  - os.system
+  - pty.spawn
+  - shutil.rmtree
+  - subprocess.call
+  - subprocess.check_call
+  - subprocess.check_output
+  - subprocess.Popen
+  - subprocess.run
+  - unlink
+  - rmdir
+
+live_codex_model_file_required_symbols:
+  - TASK_STATES
+  - TERMINAL_TASK_STATES
+  - HEALTH_STATUSES
+  - CommandResult
+  - HealthCheckResult
+
+live_codex_model_file_required_frozen_dataclasses:
+  - CommandResult
+  - HealthCheckResult
 
 requires_approval:
   - deploy_to_production
