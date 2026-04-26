@@ -24,8 +24,8 @@ from app.artifact_store import write_text_artifact
 from app.config import get_settings
 from app.db import transaction
 from app.events import record_event, utc_now
-from app.locks import managed_lock
-from app.models import HEALTH_STATUSES
+from app.locks import active_locks, managed_lock
+from app.models import HEALTH_STATUSES, TASK_STATES
 from app.policies import (
     LIVE_CODEX_DOCS_ONLY_MODE,
     LIVE_CODEX_DOCS_ONLY_TARGETS,
@@ -152,6 +152,87 @@ def list_tasks() -> list[dict[str, Any]]:
             """
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def task_inbox() -> dict[str, Any]:
+    with transaction() as conn:
+        task_rows = conn.execute(
+            """
+            SELECT id, project, title, type, priority, status, created_at, updated_at, started_at
+            FROM tasks
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+        run_rows = conn.execute(
+            """
+            SELECT task_runs.*
+            FROM task_runs
+            JOIN (
+              SELECT task_id, MAX(started_at) AS latest_started_at
+              FROM task_runs
+              GROUP BY task_id
+            ) latest
+              ON latest.task_id = task_runs.task_id
+             AND latest.latest_started_at = task_runs.started_at
+            ORDER BY task_runs.started_at DESC
+            """
+        ).fetchall()
+        artifact_rows = conn.execute(
+            """
+            SELECT task_artifacts.*
+            FROM task_artifacts
+            WHERE artifact_type IN ('changed_files', 'review_summary')
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+
+    tasks = [dict(row) for row in task_rows]
+    latest_runs: dict[str, dict[str, Any]] = {}
+    for row in run_rows:
+        run = dict(row)
+        latest_runs.setdefault(run["task_id"], run)
+
+    latest_artifacts: dict[str, list[dict[str, Any]]] = {}
+    for row in artifact_rows:
+        artifact = dict(row)
+        latest_artifacts.setdefault(artifact["task_id"], []).append(artifact)
+
+    counts: dict[str, int] = {status: 0 for status in TASK_STATES}
+    for task in tasks:
+        counts[task["status"]] = counts.get(task["status"], 0) + 1
+
+    enriched = []
+    for task in tasks:
+        latest_run = latest_runs.get(task["id"])
+        item = {
+            **task,
+            "latest_run": latest_run,
+            "changed_files": _inbox_changed_files(latest_artifacts.get(task["id"], [])),
+        }
+        enriched.append(item)
+
+    return {
+        "task_count": len(tasks),
+        "counts": counts,
+        "review": [task for task in enriched if task["status"] == "review"],
+        "failed": [task for task in enriched if task["status"] == "failed"],
+        "running": [task for task in enriched if task["status"] == "running"],
+        "queued": [task for task in enriched if task["status"] == "queued"],
+        "active_locks": active_locks(),
+    }
+
+
+def _inbox_changed_files(artifacts: list[dict[str, Any]]) -> list[str] | None:
+    for artifact in artifacts:
+        path = Path(artifact["path"])
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        changed_files = data.get("changed_files")
+        if isinstance(changed_files, list) and all(isinstance(item, str) for item in changed_files):
+            return changed_files
+    return None
 
 
 def show_task(task_id: str) -> dict[str, Any]:

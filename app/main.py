@@ -17,7 +17,7 @@ from app.router import (
     create_live_codex_tests_only_task,
 )
 from app.scheduler import run_next
-from app.task_engine import approve_task, create_task, list_tasks, reject_task, show_task
+from app.task_engine import approve_task, create_task, list_tasks, reject_task, show_task, task_inbox
 from tools.log_tools import tail_operator_log
 
 
@@ -60,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     tasks = subparsers.add_parser("tasks")
     tasks_subparsers = tasks.add_subparsers(dest="tasks_command", required=True)
     tasks_subparsers.add_parser("list")
+    tasks_subparsers.add_parser("inbox")
 
     run = subparsers.add_parser("run")
     run_subparsers = run.add_subparsers(dest="run_command", required=True)
@@ -81,6 +82,66 @@ def build_parser() -> argparse.ArgumentParser:
 
 def print_task_summary(task: dict) -> None:
     print(f"{task['id']}  {task['status']}  {task['project']}  {task['title']}")
+
+
+def print_task_inbox(inbox: dict) -> None:
+    if inbox["task_count"] == 0:
+        print("No tasks found. Operator is idle.")
+        return
+
+    print("Task Inbox")
+    print("Counts by status")
+    counts = inbox["counts"]
+    visible_counts = [f"{status}: {count}" for status, count in counts.items() if count]
+    print(", ".join(visible_counts) if visible_counts else "none")
+    print()
+
+    print("Needs attention now")
+    attention_count = len(inbox["review"]) + len(inbox["failed"]) + len(inbox["running"])
+    if attention_count == 0:
+        print("- none")
+    for task in inbox["review"]:
+        print(f"- REVIEW {task['id']}  {task['title']}")
+        print(f"  changed files: {_format_changed_files(task['changed_files'])}")
+        print(f"  next: scripts/operator task show {task['id']}")
+        print(f"        scripts/operator task approve {task['id']}")
+        print(f"        scripts/operator task reject {task['id']}")
+    for task in inbox["failed"]:
+        latest_run = task.get("latest_run") or {}
+        print(f"- FAILED {task['id']}  {task['title']}")
+        print(f"  latest run: {latest_run.get('summary') or 'unavailable'}")
+        print(f"  next: scripts/operator task show {task['id']}")
+    for task in inbox["running"]:
+        latest_run = task.get("latest_run") or {}
+        print(f"- RUNNING {task['id']}  {task['title']}")
+        print(f"  started: {task.get('started_at') or latest_run.get('started_at') or 'unavailable'}")
+        print(f"  heartbeat: {latest_run.get('heartbeat_at') or 'unavailable'}")
+        print(f"  next: scripts/operator task show {task['id']}")
+    print()
+
+    print("Queued")
+    if not inbox["queued"]:
+        print("- none")
+    for task in inbox["queued"]:
+        print(f"- QUEUED {task['id']}  {task['title']}")
+        print(f"  next: scripts/operator task show {task['id']}")
+    print()
+
+    print("Active locks")
+    locks = inbox["active_locks"]
+    if not locks:
+        print("- none")
+    for lock in locks:
+        task_id = lock.get("task_id") or "none"
+        print(f"- {lock['lock_type']}:{lock['resource_key']} task={task_id} acquired={lock['acquired_at']}")
+
+
+def _format_changed_files(changed_files: list[str] | None) -> str:
+    if changed_files is None:
+        return "unavailable"
+    if not changed_files:
+        return "none"
+    return ", ".join(changed_files)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,6 +230,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "tasks" and args.tasks_command == "list":
             for task in list_tasks():
                 print_task_summary(task)
+            return 0
+
+        if args.command == "tasks" and args.tasks_command == "inbox":
+            print_task_inbox(task_inbox())
             return 0
 
         if args.command == "run" and args.run_command == "next":

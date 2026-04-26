@@ -65,6 +65,7 @@ Run commands from the repo root:
 
 ```bash
 scripts/operator status
+scripts/operator tasks inbox
 scripts/operator health check
 scripts/operator logs tail
 ```
@@ -74,6 +75,7 @@ Create and run the explicit health-check task:
 ```bash
 scripts/operator task create --project vps --type health_check --title "Inspect Caddy, kairoke.service, and Docker health" --goal "Read-only inspection of Caddy, kairoke.service, and Docker health"
 scripts/operator run next
+scripts/operator tasks inbox
 scripts/operator tasks list
 scripts/operator task show <task_id>
 ```
@@ -85,10 +87,21 @@ operator task create
 operator tasks list
 operator task show
 operator run next
+operator tasks inbox
 operator status
 operator logs tail
 operator health check
 ```
+
+## Daily Task Inbox
+
+Use the read-only task inbox when starting work or checking what needs attention:
+
+```bash
+scripts/operator tasks inbox
+```
+
+The inbox shows task counts, review items that need approve/reject attention, failed task summaries, running task heartbeat context, queued tasks, and active lock summaries. It does not mutate tasks, clean locks, approve or reject work, or print raw worker stdout/stderr.
 
 ## Health-Check Results
 
