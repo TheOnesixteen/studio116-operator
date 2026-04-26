@@ -680,18 +680,19 @@ def live_codex_model_file_preflight_checks(
     return [{"name": name, "passed": bool(passed)} for name, passed in checks] + target_path_checks
 
 
-def validate_live_codex_changed_files(changed_files: list[str]) -> list[dict]:
-    path_checks = validate_live_codex_docs_only_paths(changed_files)
+def _live_codex_changed_file_checks(
+    *,
+    changed_files: list[str],
+    path_checks: list[dict],
+    count_check: dict,
+    allowed_targets: list[str],
+) -> list[dict]:
     checks = [
-        {
-            "name": "changed_file_count_at_most_5",
-            "passed": len(changed_files) <= LIVE_CODEX_MAX_CHANGED_FILES,
-            "details": {"count": len(changed_files), "max": LIVE_CODEX_MAX_CHANGED_FILES},
-        },
+        count_check,
         {
             "name": "changed_files_are_policy_allowed",
             "passed": all(check["passed"] for check in path_checks),
-            "details": {"changed_files": changed_files, "allowed": live_codex_docs_only_allowed_targets()},
+            "details": {"changed_files": changed_files, "allowed": allowed_targets},
         },
         {
             "name": "no_hidden_files_changed",
@@ -715,117 +716,62 @@ def validate_live_codex_changed_files(changed_files: list[str]) -> list[dict]:
         },
     ]
     return checks + path_checks
+
+
+def validate_live_codex_changed_files(changed_files: list[str]) -> list[dict]:
+    path_checks = validate_live_codex_docs_only_paths(changed_files)
+    return _live_codex_changed_file_checks(
+        changed_files=changed_files,
+        path_checks=path_checks,
+        count_check={
+            "name": "changed_file_count_at_most_5",
+            "passed": len(changed_files) <= LIVE_CODEX_MAX_CHANGED_FILES,
+            "details": {"count": len(changed_files), "max": LIVE_CODEX_MAX_CHANGED_FILES},
+        },
+        allowed_targets=live_codex_docs_only_allowed_targets(),
+    )
 
 
 def validate_live_codex_tests_only_changed_files(changed_files: list[str]) -> list[dict]:
     path_checks = validate_live_codex_tests_only_paths(changed_files)
-    checks = [
-        {
+    return _live_codex_changed_file_checks(
+        changed_files=changed_files,
+        path_checks=path_checks,
+        count_check={
             "name": "changed_file_count_at_most_5",
             "passed": len(changed_files) <= LIVE_CODEX_MAX_CHANGED_FILES,
             "details": {"count": len(changed_files), "max": LIVE_CODEX_MAX_CHANGED_FILES},
         },
-        {
-            "name": "changed_files_are_policy_allowed",
-            "passed": all(check["passed"] for check in path_checks),
-            "details": {"changed_files": changed_files, "allowed": live_codex_tests_only_allowed_targets()},
-        },
-        {
-            "name": "no_hidden_files_changed",
-            "passed": all(not (path.startswith(".") or "/." in path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "no_env_files_changed",
-            "passed": all(not (path.endswith(".env") or path == ".env" or ".env." in path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "no_deploy_config_system_files_changed",
-            "passed": all(not is_forbidden_live_codex_path(path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "changed_paths_are_repo_relative",
-            "passed": all(_path_is_repo_relative(path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-    ]
-    return checks + path_checks
+        allowed_targets=live_codex_tests_only_allowed_targets(),
+    )
 
 
 def validate_live_codex_policy_file_changed_files(changed_files: list[str]) -> list[dict]:
     path_checks = validate_live_codex_policy_file_paths(changed_files)
-    checks = [
-        {
+    return _live_codex_changed_file_checks(
+        changed_files=changed_files,
+        path_checks=path_checks,
+        count_check={
             "name": "changed_file_count_exactly_1",
             "passed": len(changed_files) == 1,
             "details": {"count": len(changed_files), "required": 1},
         },
-        {
-            "name": "changed_files_are_policy_allowed",
-            "passed": all(check["passed"] for check in path_checks),
-            "details": {"changed_files": changed_files, "allowed": live_codex_policy_file_allowed_targets()},
-        },
-        {
-            "name": "no_hidden_files_changed",
-            "passed": all(not (path.startswith(".") or "/." in path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "no_env_files_changed",
-            "passed": all(not (path.endswith(".env") or path == ".env" or ".env." in path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "no_deploy_config_system_files_changed",
-            "passed": all(not is_forbidden_live_codex_path(path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "changed_paths_are_repo_relative",
-            "passed": all(_path_is_repo_relative(path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-    ]
-    return checks + path_checks
+        allowed_targets=live_codex_policy_file_allowed_targets(),
+    )
 
 
 def validate_live_codex_model_file_changed_files(changed_files: list[str]) -> list[dict]:
     path_checks = validate_live_codex_model_file_paths(changed_files)
-    checks = [
-        {
+    return _live_codex_changed_file_checks(
+        changed_files=changed_files,
+        path_checks=path_checks,
+        count_check={
             "name": "changed_file_count_exactly_1",
             "passed": len(changed_files) == 1,
             "details": {"count": len(changed_files), "required": 1},
         },
-        {
-            "name": "changed_files_are_policy_allowed",
-            "passed": all(check["passed"] for check in path_checks),
-            "details": {"changed_files": changed_files, "allowed": live_codex_model_file_allowed_targets()},
-        },
-        {
-            "name": "no_hidden_files_changed",
-            "passed": all(not (path.startswith(".") or "/." in path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "no_env_files_changed",
-            "passed": all(not (path.endswith(".env") or path == ".env" or ".env." in path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "no_deploy_config_system_files_changed",
-            "passed": all(not is_forbidden_live_codex_path(path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-        {
-            "name": "changed_paths_are_repo_relative",
-            "passed": all(_path_is_repo_relative(path) for path in changed_files),
-            "details": {"changed_files": changed_files},
-        },
-    ]
-    return checks + path_checks
+        allowed_targets=live_codex_model_file_allowed_targets(),
+    )
 
 
 def _import_root(module_name: str) -> str:
