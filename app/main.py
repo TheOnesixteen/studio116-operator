@@ -94,37 +94,21 @@ def print_task_inbox(inbox: dict) -> None:
     counts = inbox["counts"]
     visible_counts = [f"{status}: {count}" for status, count in counts.items() if count]
     print(", ".join(visible_counts) if visible_counts else "none")
+    print(f"Stale threshold: {inbox['stale_after_days']} days based on task updated_at")
     print()
 
     print("Needs attention now")
-    attention_count = len(inbox["review"]) + len(inbox["failed"]) + len(inbox["running"])
-    if attention_count == 0:
-        print("- none")
-    for task in inbox["review"]:
-        print(f"- REVIEW {task['id']}  {task['title']}")
-        print(f"  changed files: {_format_changed_files(task['changed_files'])}")
-        print(f"  next: scripts/operator task show {task['id']}")
-        print(f"        scripts/operator task approve {task['id']}")
-        print(f"        scripts/operator task reject {task['id']}")
-    for task in inbox["failed"]:
-        latest_run = task.get("latest_run") or {}
-        print(f"- FAILED {task['id']}  {task['title']}")
-        print(f"  latest run: {latest_run.get('summary') or 'unavailable'}")
-        print(f"  next: scripts/operator task show {task['id']}")
-    for task in inbox["running"]:
-        latest_run = task.get("latest_run") or {}
-        print(f"- RUNNING {task['id']}  {task['title']}")
-        print(f"  started: {task.get('started_at') or latest_run.get('started_at') or 'unavailable'}")
-        print(f"  heartbeat: {latest_run.get('heartbeat_at') or 'unavailable'}")
-        print(f"  next: scripts/operator task show {task['id']}")
+    if not inbox["current_unresolved"]:
+        print("Nothing needs attention right now.")
+    for task in inbox["current_unresolved"]:
+        _print_inbox_task(task, stale=False)
     print()
 
-    print("Queued")
-    if not inbox["queued"]:
+    print("Older unresolved work")
+    if not inbox["stale_unresolved"]:
         print("- none")
-    for task in inbox["queued"]:
-        print(f"- QUEUED {task['id']}  {task['title']}")
-        print(f"  next: scripts/operator task show {task['id']}")
+    for task in inbox["stale_unresolved"]:
+        _print_inbox_task(task, stale=True)
     print()
 
     print("Active locks")
@@ -134,6 +118,29 @@ def print_task_inbox(inbox: dict) -> None:
     for lock in locks:
         task_id = lock.get("task_id") or "none"
         print(f"- {lock['lock_type']}:{lock['resource_key']} task={task_id} acquired={lock['acquired_at']}")
+
+
+def _print_inbox_task(task: dict, *, stale: bool) -> None:
+    status_label = task["status"].upper()
+    prefix = f"STALE {status_label}" if stale else status_label
+    print(f"- {prefix} {task['id']}  {task['title']}")
+    print(f"  age: {task['age_days']}d")
+    print(f"  updated: {task.get('updated_at') or 'unavailable'}")
+    latest_run = task.get("latest_run") or {}
+    if task["status"] == "review":
+        print(f"  changed files: {_format_changed_files(task['changed_files'])}")
+        print(f"  next: scripts/operator task show {task['id']}")
+        print(f"        scripts/operator task approve {task['id']}")
+        print(f"        scripts/operator task reject {task['id']}")
+    elif task["status"] == "failed":
+        print(f"  latest run: {latest_run.get('summary') or 'unavailable'}")
+        print(f"  next: scripts/operator task show {task['id']}")
+    elif task["status"] == "running":
+        print(f"  started: {task.get('started_at') or latest_run.get('started_at') or 'unavailable'}")
+        print(f"  heartbeat: {latest_run.get('heartbeat_at') or 'unavailable'}")
+        print(f"  next: scripts/operator task show {task['id']}")
+    else:
+        print(f"  next: scripts/operator task show {task['id']}")
 
 
 def _format_changed_files(changed_files: list[str] | None) -> str:

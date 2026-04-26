@@ -101,7 +101,7 @@ Use the read-only task inbox when starting work or checking what needs attention
 scripts/operator tasks inbox
 ```
 
-The inbox shows task counts, review items that need approve/reject attention, failed task summaries, running task heartbeat context, queued tasks, and active lock summaries. It does not mutate tasks, clean locks, approve or reject work, or print raw worker stdout/stderr.
+The inbox shows task counts, current unresolved work, older unresolved work, review items that need approve/reject attention, failed task summaries, running task heartbeat context, queued tasks, and active lock summaries. Tasks are considered stale after 3 days based on `tasks.updated_at`; running task heartbeat is shown as extra context but is not used for staleness classification. The inbox does not mutate tasks, clean locks, approve or reject work, or print raw worker stdout/stderr.
 
 ## Health-Check Results
 

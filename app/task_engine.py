@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import ExitStack, contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -68,6 +69,8 @@ from tools.systemd_tools import inspect_service
 
 HEALTH_CHECK_TITLE = "Inspect Caddy, kairoke.service, and Docker health"
 HEALTH_CHECK_GOAL = "Read-only inspection of Caddy, kairoke.service, and Docker health"
+INBOX_STALE_AFTER_DAYS = 3
+INBOX_UNRESOLVED_STATUSES = {"queued", "running", "review", "failed"}
 
 
 def create_task(
@@ -155,6 +158,7 @@ def list_tasks() -> list[dict[str, Any]]:
 
 
 def task_inbox() -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
     with transaction() as conn:
         task_rows = conn.execute(
             """
@@ -204,22 +208,43 @@ def task_inbox() -> dict[str, Any]:
     enriched = []
     for task in tasks:
         latest_run = latest_runs.get(task["id"])
+        age_days = _inbox_age_days(task.get("updated_at"), now)
         item = {
             **task,
             "latest_run": latest_run,
             "changed_files": _inbox_changed_files(latest_artifacts.get(task["id"], [])),
+            "age_days": age_days,
+            "is_stale": age_days >= INBOX_STALE_AFTER_DAYS,
         }
         enriched.append(item)
+
+    unresolved = [task for task in enriched if task["status"] in INBOX_UNRESOLVED_STATUSES]
 
     return {
         "task_count": len(tasks),
         "counts": counts,
+        "stale_after_days": INBOX_STALE_AFTER_DAYS,
+        "current_unresolved": [task for task in unresolved if not task["is_stale"]],
+        "stale_unresolved": [task for task in unresolved if task["is_stale"]],
         "review": [task for task in enriched if task["status"] == "review"],
         "failed": [task for task in enriched if task["status"] == "failed"],
         "running": [task for task in enriched if task["status"] == "running"],
         "queued": [task for task in enriched if task["status"] == "queued"],
         "active_locks": active_locks(),
     }
+
+
+def _inbox_age_days(timestamp: str | None, now: datetime) -> int:
+    if not timestamp:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age = now - parsed
+    return max(age.days, 0)
 
 
 def _inbox_changed_files(artifacts: list[dict[str, Any]]) -> list[str] | None:
