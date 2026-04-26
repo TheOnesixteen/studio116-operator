@@ -292,4 +292,53 @@ studio116-operator/
   tests/
   OPERATOR.md
   README.md
-Phase 2.3 is complete.
+```
+
+### Current Proven State
+
+Phase 2 has proven four narrow writable Codex lanes for the Operator repo:
+
+- `live_codex_docs_only` for policy-whitelisted docs targets in `registry/policies.yaml`.
+- `live_codex_tests_only` for `tests/test_*.py` only, with content hardening.
+- `live_codex_policy_file_only` for `app/policies.py` only. Phase 2.5a is smoke-proven.
+- `live_codex_model_file_only` for `app/models.py` only. Phase 2.6a is smoke-proven.
+
+No other app files, registry files, tests, infrastructure, runtime files, deploy scripts, service files, or config files are writable Codex targets unless a future phase explicitly proves and documents a new lane.
+
+### Phase Milestones
+
+Current milestone tags:
+
+- `phase2.4a-tests-whitelist-stable`
+- `phase2.4b-tests-content-hardened`
+- `phase2.4b-stale-patch-recovery`
+- `phase2.5a-policy-file-lane-stable`
+- `phase2.5a-policy-file-smoke-proven`
+- `phase2.6a-model-file-lane-stable`
+- `phase2.6a-model-file-smoke-proven`
+
+Phase 2.7a currently includes commit `1ad78d5`, which adds a characterization test for recurring Codex stderr noise.
+
+### Current Safety Model
+
+Live Codex writes remain bounded by:
+
+- registry-backed whitelists as the source of truth
+- isolated delegated worktrees
+- one writable Codex task at a time
+- scheduler-owned SQLite locks
+- preflight before worker launch
+- post-run changed-file and content validation
+- mandatory stop in `review`
+- canonical checkout untouched until explicit approval
+- approval applying a patch only after validation
+- rejection discarding delegated worktree changes only
+- no auto-commit, auto-merge, auto-push, deploy, package install, or network-dependent work
+
+### Phase 2.7 Direction
+
+Phase 2.7a is a hardening and cleanup phase, not a writable-scope expansion phase.
+
+The characterization test in `tests/test_phase27a_codex_stderr_noise.py` proves that the recurring Codex stderr message `failed to record rollout items` is captured as raw stderr in Operator records, including `worker_executions.stderr` and `worker_result.json`, but is non-blocking when Codex exits successfully and is not promoted into human-facing review summaries.
+
+Next cleanup work should reduce silent complexity and naming drift without changing delegation mode strings, smoke-proven artifact filenames, check names used in existing artifacts, or approve/reject behavior.
