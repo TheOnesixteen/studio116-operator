@@ -94,7 +94,7 @@ def print_task_inbox(inbox: dict) -> None:
     counts = inbox["counts"]
     visible_counts = [f"{status}: {count}" for status, count in counts.items() if count]
     print(", ".join(visible_counts) if visible_counts else "none")
-    print(f"Stale threshold: {inbox['stale_after_days']} days based on task updated_at")
+    print(f"Tasks untouched for {inbox['stale_after_days']}+ days appear under Older unresolved work.")
     print()
 
     print("Needs attention now")

@@ -131,7 +131,8 @@ class Phase27cTaskInboxStalenessTests(unittest.TestCase):
             exit_code, output = _run_cli(["tasks", "inbox"])
 
         self.assertEqual(exit_code, 0)
-        self.assertLess(output.index("Fresh review task"), output.index("Older unresolved work"))
+        self.assertIn("Tasks untouched for 3+ days appear under Older unresolved work.", output)
+        self.assertLess(output.index("Fresh review task"), output.index("\nOlder unresolved work\n"))
         self.assertIn(task_id, output)
         self.assertIn("age: 1d", output)
 
@@ -143,7 +144,7 @@ class Phase27cTaskInboxStalenessTests(unittest.TestCase):
             exit_code, output = _run_cli(["tasks", "inbox"])
 
         self.assertEqual(exit_code, 0)
-        self.assertLess(output.index("Older unresolved work"), output.index("Old failed task"))
+        self.assertLess(output.index("\nOlder unresolved work\n"), output.index("Old failed task"))
         self.assertIn(f"- STALE FAILED {task_id}  Old failed task", output)
         self.assertIn("age: 5d", output)
         self.assertIn("updated:", output)
