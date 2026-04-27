@@ -171,3 +171,39 @@ projects:
     status: planned
     notes: "Faith-tech product. Analyzes words of Jesus across the 4 gospels. Build not yet started."
 
+  thetrouper:
+    slug: thetrouper
+    name: The Trouper
+    repo_path: /root/Projects/thetrouper.com
+    stack:
+      - wordpress
+      - php
+      - siteground
+    domains:
+      - thetrouper.com
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+    deployment_method: siteground_sftp
+    status: active
+    notes: "Community/local platform project. WordPress-based. Deploys to SiteGround."
+
+  kensingtonpool:
+    slug: kensingtonpool
+    name: Kensington Pool
+    repo_path: /root/Projects/kensingtonpool.com
+    stack:
+      - html
+      - css
+      - javascript
+      - siteground
+    domains:
+      - kensingtonpool.com
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+    deployment_method: siteground_sftp
+    status: active
+    notes: "Client website. Deploys to SiteGround."
