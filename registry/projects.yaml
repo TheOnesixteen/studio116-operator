@@ -1,3 +1,6 @@
+
+
+
 projects:
   operator:
     slug: operator
@@ -149,3 +152,22 @@ projects:
     deployment_method: manual
     status: active
     notes: "DigitalOcean droplet infrastructure. Read-only registry knowledge; no deployment authority."
+
+  redletters:
+    slug: redletters
+    name: Red Letters
+    repo_path: /root/Projects/redletters.tellthem.ai
+    stack:
+      - flask
+      - sqlite
+      - caddy
+    domains:
+      - redletters.tellthem.ai
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+    deployment_method: droplet_systemd
+    status: planned
+    notes: "Faith-tech product. Analyzes words of Jesus across the 4 gospels. Build not yet started."
+
