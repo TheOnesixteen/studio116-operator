@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.db import init_db
 from app.locks import active_locks
 from app.models import TASK_STATES
+from app.project_registry import get_project, load_projects, ordered_projects, validate_registry
 from app.router import (
     create_delegated_dry_run_task,
     create_health_check_task,
@@ -76,6 +77,13 @@ def build_parser() -> argparse.ArgumentParser:
     health = subparsers.add_parser("health")
     health_subparsers = health.add_subparsers(dest="health_command", required=True)
     health_subparsers.add_parser("check")
+
+    projects = subparsers.add_parser("projects")
+    projects_subparsers = projects.add_subparsers(dest="projects_command", required=True)
+    projects_subparsers.add_parser("list")
+    project_show = projects_subparsers.add_parser("show")
+    project_show.add_argument("slug")
+    projects_subparsers.add_parser("validate")
 
     return parser
 
@@ -151,12 +159,65 @@ def _format_changed_files(changed_files: list[str] | None) -> str:
     return ", ".join(changed_files)
 
 
+def print_projects_list(projects: list[dict]) -> None:
+    print("Projects")
+    for project in projects:
+        domains = ", ".join(project["domains"]) if project["domains"] else "none"
+        agents = ", ".join(project["allowed_agents"])
+        print(f"- {project['slug']}  {project['name']}")
+        print(f"  status: {project['status']}")
+        print(f"  deployment: {project['deployment_method']}")
+        print(f"  agents: {agents}")
+        print(f"  domains: {domains}")
+
+
+def print_project_detail(project: dict) -> None:
+    print(f"{project['name']} ({project['slug']})")
+    print(f"status: {project['status']}")
+    print(f"repo_path: {project['repo_path']}")
+    print(f"stack: {_format_project_list(project['stack'])}")
+    print(f"domains: {_format_project_list(project['domains'])}")
+    print(f"services: {_format_project_list(project['services'])}")
+    print(f"allowed_agents: {_format_project_list(project['allowed_agents'])}")
+    print(f"deployment_method: {project['deployment_method']}")
+    print(f"notes: {project['notes']}")
+
+
+def _format_project_list(values: list[str]) -> str:
+    return ", ".join(values) if values else "none"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    init_db()
 
     try:
+        if args.command == "projects" and args.projects_command == "list":
+            validation = validate_registry()
+            if not validation.ok:
+                raise ValueError("project registry is invalid; run scripts/operator projects validate")
+            print_projects_list(ordered_projects(load_projects()))
+            return 0
+
+        if args.command == "projects" and args.projects_command == "show":
+            validation = validate_registry()
+            if not validation.ok:
+                raise ValueError("project registry is invalid; run scripts/operator projects validate")
+            print_project_detail(get_project(args.slug))
+            return 0
+
+        if args.command == "projects" and args.projects_command == "validate":
+            validation = validate_registry()
+            if validation.ok:
+                print("Project registry is valid.")
+                return 0
+            print("Project registry is invalid.")
+            for error in validation.errors:
+                print(f"- {error}")
+            return 1
+
+        init_db()
+
         if args.command == "task" and args.task_command == "create":
             if args.task_type == "delegated":
                 if not args.worker:

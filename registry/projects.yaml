@@ -1,68 +1,151 @@
 projects:
+  operator:
+    slug: operator
+    name: Studio 116 Operator
+    repo_path: /root/Projects/studio116-operator
+    stack:
+      - python
+      - sqlite
+      - systemd
+    domains: []
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+    deployment_method: manual
+    status: active
+    notes: "The Operator itself. Self-referential. Writable lanes govern all changes."
+
   kairoke:
+    slug: kairoke
+    name: Kairoke
     repo_path: /root/Projects/kairoke.com
-    type: flask_app
-    deploy_method: deploy-kairoke
-    runtime:
-      service: kairoke.service
-      port: 5000
-      reverse_proxy: caddy
-    tags: [web, flask, ai, music, n8n]
-    risk_level: medium
+    stack:
+      - flask
+      - systemd
+      - caddy
+      - n8n
+    domains:
+      - kairoke.com
+    services:
+      - kairoke.service
+    allowed_agents:
+      - codex
+      - claude_code
+      - n8n
+    deployment_method: droplet_systemd
+    status: active
     notes: "AI karaoke platform. Song generation via Mureka API."
 
   skilagrange:
+    slug: skilagrange
+    name: SKI LaGrange
     repo_path: /root/Projects/skilagrange.com
-    type: siteground_site
-    deploy_method: deploy-ski
-    runtime:
-      host: SiteGround
-    tags: [website, forms, n8n, twilio]
-    risk_level: low
+    stack:
+      - website
+      - n8n
+      - twilio
+      - siteground
+    domains:
+      - skilagrange.com
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+      - n8n
+    deployment_method: siteground_sftp
+    status: active
     notes: "Lead form → n8n → Twilio SMS to Coach Mike."
 
   kdomusic:
+    slug: kdomusic
+    name: KDO Music
     repo_path: /root/Projects/kdomusic.com
-    type: siteground_site
-    deploy_method: deploy-katie
-    tags: [website, music, client]
-    risk_level: low
+    stack:
+      - website
+      - siteground
+    domains:
+      - kdomusic.com
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+    deployment_method: siteground_sftp
+    status: active
     notes: "Needs YouTube IDs, booking email, hero photo."
 
   combsplumbing:
+    slug: combsplumbing
+    name: Combs Plumbing
     repo_path: /root/Projects/combsplumbing.com
-    type: siteground_site
-    deploy_method: deploy-combs
-    tags: [website, client]
-    risk_level: low
+    stack:
+      - website
+      - siteground
+    domains:
+      - combsplumbing.com
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+    deployment_method: siteground_sftp
+    status: active
+    notes: "Client website hosted on SiteGround."
 
   robinolinger:
+    slug: robinolinger
+    name: Robin Olinger
     repo_path: /root/Projects/robinolinger.com
-    type: siteground_site
-    deploy_method: deploy-robin
-    tags: [website, real_estate, idx]
-    risk_level: low
+    stack:
+      - website
+      - real_estate
+      - idx
+      - siteground
+    domains:
+      - robinolinger.com
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+    deployment_method: siteground_sftp
+    status: planned
     notes: "Pending GAMLS IDX Vendor Agreement."
 
   studio116:
+    slug: studio116
+    name: Studio 116
     repo_path: /root/Projects/116.studio-AI
-    type: automation
-    deploy_method: deploy-studio
-    tags: [automation, orchestration, ops]
-    risk_level: medium
+    stack:
+      - website
+      - automation
+      - ops
+    domains:
+      - 116.studio
+    services: []
+    allowed_agents:
+      - codex
+      - claude_code
+      - n8n
+    deployment_method: siteground_sftp
+    status: active
+    notes: "Studio 116 public and automation surface."
 
   vps:
+    slug: vps
+    name: Studio 116 VPS
     repo_path: /root
-    type: infrastructure
-    deploy_method: manual
-    tags: [docker, caddy, systemd, ubuntu]
-    risk_level: high
-    notes: "2GB RAM / 2vCPU. n8n + kairoke + Caddy running."
-
-  operator:
-    repo_path: /root/Projects/studio116-operator
-    type: python_service
-    deploy_method: systemd
-    tags: [orchestration, ai, meta]
-    risk_level: high
-    notes: "This is the Operator itself."
+    stack:
+      - ubuntu
+      - docker
+      - caddy
+      - systemd
+    domains:
+      - do.116.studio
+    services:
+      - caddy
+      - kairoke.service
+      - n8n
+    allowed_agents:
+      - claude_code
+    deployment_method: manual
+    status: active
+    notes: "DigitalOcean droplet infrastructure. Read-only registry knowledge; no deployment authority."
