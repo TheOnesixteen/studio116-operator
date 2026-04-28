@@ -167,6 +167,14 @@ projects:
     allowed_agents:
       - codex
       - claude_code
+    write_policy:
+      writable: false
+      allowed_write_agents: []
+      allowed_lane: null
+      max_changed_files: 1
+      allow_file_creation: false
+      requires_human_approval: true
+      deployment_allowed: false
     deployment_method: droplet_systemd
     status: planned
     notes: "Faith-tech product. Analyzes words of Jesus across the 4 gospels. Build not yet started."

@@ -11,8 +11,19 @@ from app.config import get_settings
 
 
 ALLOWED_AGENTS = {"codex", "claude_code", "n8n"}
+ALLOWED_WRITE_AGENTS = {"codex", "claude_code"}
+ALLOWED_WRITE_LANES = {"docs_only", "tests_only", "single_file_code", "multi_file_scoped"}
 DEPLOYMENT_METHODS = {"none", "manual", "siteground_sftp", "droplet_systemd", "docker_compose", "n8n_webhook"}
 PROJECT_STATUSES = {"active", "paused", "planned", "archived"}
+REQUIRED_WRITE_POLICY_FIELDS = {
+    "writable",
+    "allowed_write_agents",
+    "allowed_lane",
+    "max_changed_files",
+    "allow_file_creation",
+    "requires_human_approval",
+    "deployment_allowed",
+}
 REQUIRED_PROJECT_FIELDS = {
     "slug",
     "name",
@@ -86,6 +97,7 @@ def validate_projects(projects: dict[str, dict[str, Any]]) -> ProjectRegistryVal
         _validate_status(project, prefix, errors)
         _validate_nonempty_string(project, "notes", prefix, errors)
         _validate_domains(project, prefix, errors)
+        _validate_write_policy(project, prefix, errors)
         _validate_no_secret_values(project, prefix, errors)
 
     return ProjectRegistryValidation(ok=not errors, errors=errors)
@@ -197,6 +209,92 @@ def _validate_domains(project: dict[str, Any], prefix: str, errors: list[str]) -
             continue
         if not HOSTNAME_PATTERN.fullmatch(domain):
             errors.append(f"{prefix}.domains: {domain!r} must be a valid hostname")
+
+
+def _validate_write_policy(project: dict[str, Any], prefix: str, errors: list[str]) -> None:
+    if "write_policy" not in project:
+        return
+
+    write_policy = project.get("write_policy")
+    policy_prefix = f"{prefix}.write_policy"
+    if not isinstance(write_policy, dict):
+        errors.append(f"{policy_prefix}: must be a mapping")
+        return
+
+    writable = write_policy.get("writable")
+    if not isinstance(writable, bool):
+        errors.append(f"{policy_prefix}.writable: must be a boolean")
+        return
+
+    if writable:
+        missing_fields = sorted(REQUIRED_WRITE_POLICY_FIELDS - set(write_policy))
+        for field in missing_fields:
+            errors.append(f"{policy_prefix}: missing required field {field}")
+
+    unknown_fields = sorted(set(write_policy) - REQUIRED_WRITE_POLICY_FIELDS)
+    for field in unknown_fields:
+        errors.append(f"{policy_prefix}.{field}: unknown field")
+
+    _validate_allowed_write_agents(project, write_policy, policy_prefix, errors)
+    _validate_allowed_lane(write_policy, policy_prefix, errors)
+    _validate_optional_positive_int(write_policy, "max_changed_files", policy_prefix, errors)
+    _validate_optional_bool(write_policy, "allow_file_creation", policy_prefix, errors)
+    _validate_optional_bool(write_policy, "requires_human_approval", policy_prefix, errors)
+    _validate_optional_bool(write_policy, "deployment_allowed", policy_prefix, errors)
+
+    if write_policy.get("deployment_allowed") is True:
+        errors.append(f"{policy_prefix}.deployment_allowed: true is not allowed in Phase 2.10a")
+    if writable and "deployment_allowed" not in write_policy:
+        errors.append(f"{policy_prefix}.deployment_allowed: must be explicit for writable projects")
+
+
+def _validate_allowed_write_agents(
+    project: dict[str, Any],
+    write_policy: dict[str, Any],
+    policy_prefix: str,
+    errors: list[str],
+) -> None:
+    if "allowed_write_agents" not in write_policy:
+        return
+    value = write_policy.get("allowed_write_agents")
+    if not isinstance(value, list):
+        errors.append(f"{policy_prefix}.allowed_write_agents: must be a list")
+        return
+
+    allowed_agents = project.get("allowed_agents")
+    allowed_agent_set = set(allowed_agents) if isinstance(allowed_agents, list) else set()
+    for agent in value:
+        if not isinstance(agent, str) or not agent.strip():
+            errors.append(f"{policy_prefix}.allowed_write_agents: entries must be non-empty strings")
+            continue
+        if agent not in ALLOWED_WRITE_AGENTS:
+            errors.append(f"{policy_prefix}.allowed_write_agents: unknown write agent {agent!r}")
+            continue
+        if agent not in allowed_agent_set:
+            errors.append(f"{policy_prefix}.allowed_write_agents: write agent {agent!r} must also appear in allowed_agents")
+
+
+def _validate_allowed_lane(write_policy: dict[str, Any], policy_prefix: str, errors: list[str]) -> None:
+    if "allowed_lane" not in write_policy:
+        return
+    value = write_policy.get("allowed_lane")
+    if value is None:
+        return
+    if value not in ALLOWED_WRITE_LANES:
+        errors.append(f"{policy_prefix}.allowed_lane: unknown lane {value!r}")
+
+
+def _validate_optional_bool(write_policy: dict[str, Any], field: str, policy_prefix: str, errors: list[str]) -> None:
+    if field in write_policy and not isinstance(write_policy.get(field), bool):
+        errors.append(f"{policy_prefix}.{field}: must be a boolean")
+
+
+def _validate_optional_positive_int(write_policy: dict[str, Any], field: str, policy_prefix: str, errors: list[str]) -> None:
+    if field not in write_policy:
+        return
+    value = write_policy.get(field)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        errors.append(f"{policy_prefix}.{field}: must be a positive integer")
 
 
 def _validate_no_secret_values(project: dict[str, Any], prefix: str, errors: list[str]) -> None:

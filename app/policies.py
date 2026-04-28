@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 from app.config import get_settings
 
@@ -32,6 +36,12 @@ BLOCKED_PHASE1_ACTIONS = {
     "auto_deploy_without_approval",
     "run_unknown_scripts_from_internet",
 }
+
+
+@dataclass(frozen=True)
+class PolicyRegistryValidation:
+    ok: bool
+    errors: list[str]
 
 
 def _read_yaml_list(path: Path, section: str) -> set[str]:
@@ -99,6 +109,42 @@ LIVE_CODEX_MODEL_FILE_DISALLOWED_IMPORT_ROOTS_SECTION = "live_codex_model_file_d
 LIVE_CODEX_MODEL_FILE_DISALLOWED_CALLS_SECTION = "live_codex_model_file_disallowed_calls"
 LIVE_CODEX_MODEL_FILE_REQUIRED_SYMBOLS_SECTION = "live_codex_model_file_required_symbols"
 LIVE_CODEX_MODEL_FILE_REQUIRED_FROZEN_DATACLASSES_SECTION = "live_codex_model_file_required_frozen_dataclasses"
+POLICY_LIST_SECTIONS = {
+    "allowed_without_approval",
+    "requires_approval",
+    "never_allowed",
+    LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION,
+    LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION,
+    LIVE_CODEX_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS_SECTION,
+    LIVE_CODEX_TESTS_ONLY_DISALLOWED_CALLS_SECTION,
+    LIVE_CODEX_TESTS_ONLY_DISALLOWED_STRING_TOKENS_SECTION,
+    LIVE_CODEX_TESTS_ONLY_DISALLOWED_PATH_PREFIXES_SECTION,
+    LIVE_CODEX_TESTS_ONLY_ALLOWED_PATH_PREFIXES_SECTION,
+    LIVE_CODEX_TESTS_ONLY_DISALLOWED_HOST_LITERALS_SECTION,
+    LIVE_CODEX_POLICY_FILE_ALLOWED_TARGETS_SECTION,
+    LIVE_CODEX_POLICY_FILE_DISALLOWED_IMPORT_ROOTS_SECTION,
+    LIVE_CODEX_POLICY_FILE_DISALLOWED_CALLS_SECTION,
+    LIVE_CODEX_POLICY_FILE_REQUIRED_SYMBOLS_SECTION,
+    LIVE_CODEX_MODEL_FILE_ALLOWED_TARGETS_SECTION,
+    LIVE_CODEX_MODEL_FILE_DISALLOWED_IMPORT_ROOTS_SECTION,
+    LIVE_CODEX_MODEL_FILE_DISALLOWED_CALLS_SECTION,
+    LIVE_CODEX_MODEL_FILE_REQUIRED_SYMBOLS_SECTION,
+    LIVE_CODEX_MODEL_FILE_REQUIRED_FROZEN_DATACLASSES_SECTION,
+}
+POLICY_MAPPING_SECTIONS = {"retry_policy", "lock_policy"}
+REQUIRED_POLICY_SECTIONS = POLICY_LIST_SECTIONS | POLICY_MAPPING_SECTIONS
+ALLOWED_POLICY_SECTIONS = REQUIRED_POLICY_SECTIONS
+RETRY_POLICY_INT_FIELDS = {
+    "max_blind_retry_count_per_step",
+    "max_major_approach_attempts",
+    "max_rabbit_hole_minutes",
+    "max_silent_execution_minutes",
+}
+LOCK_POLICY_SCHEMA = {
+    "authority": str,
+    "stale_lock_visibility_required": bool,
+    "scheduler_owns_locks": bool,
+}
 
 DEFAULT_TESTS_ONLY_DISALLOWED_IMPORT_ROOTS = {
     "boto3",
@@ -170,11 +216,14 @@ DEFAULT_POLICY_FILE_REQUIRED_SYMBOLS = {
     "LIVE_CODEX_TESTS_ONLY_MODE",
     "LIVE_CODEX_POLICY_FILE_ONLY_MODE",
     "LIVE_CODEX_MAX_CHANGED_FILES",
+    "PolicyRegistryValidation",
     "READ_ONLY_ACTIONS",
     "_read_yaml_list",
     "assert_phase1_allowed",
     "is_forbidden_live_codex_path",
+    "load_policy_registry",
     "live_codex_allowed_targets_for_mode",
+    "validate_policy_registry",
     "validate_live_codex_changed_files_for_mode",
     "validate_live_codex_paths_for_mode",
     "validate_live_codex_policy_file_content",
@@ -190,6 +239,111 @@ DEFAULT_MODEL_FILE_REQUIRED_SYMBOLS = {
     "HealthCheckResult",
 }
 DEFAULT_MODEL_FILE_REQUIRED_FROZEN_DATACLASSES = {"CommandResult", "HealthCheckResult"}
+
+
+def load_policy_registry(path: Path | None = None) -> dict[str, Any]:
+    registry_path = path or get_settings().policies_path
+    raw_data = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    if not isinstance(raw_data, dict):
+        raise ValueError("policy registry root must be a mapping")
+    return raw_data
+
+
+def validate_policy_registry(path: Path | None = None) -> PolicyRegistryValidation:
+    try:
+        policies = load_policy_registry(path)
+    except Exception as exc:
+        return PolicyRegistryValidation(ok=False, errors=[str(exc)])
+
+    errors: list[str] = []
+    missing_sections = sorted(REQUIRED_POLICY_SECTIONS - set(policies))
+    for section in missing_sections:
+        errors.append(f"policies.{section}: missing required section")
+
+    unknown_sections = sorted(set(policies) - ALLOWED_POLICY_SECTIONS)
+    for section in unknown_sections:
+        errors.append(f"policies.{section}: unknown section")
+
+    for section in sorted(POLICY_LIST_SECTIONS & set(policies)):
+        _validate_policy_string_list(policies, section, errors)
+
+    _validate_retry_policy(policies.get("retry_policy"), errors)
+    _validate_lock_policy(policies.get("lock_policy"), errors)
+    _validate_policy_allowed_targets(policies, errors)
+
+    return PolicyRegistryValidation(ok=not errors, errors=errors)
+
+
+def _validate_policy_string_list(policies: dict[str, Any], section: str, errors: list[str]) -> None:
+    value = policies.get(section)
+    if not isinstance(value, list):
+        errors.append(f"policies.{section}: must be a list")
+        return
+    if not value:
+        errors.append(f"policies.{section}: must not be empty")
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            errors.append(f"policies.{section}: entries must be non-empty strings")
+            continue
+        if item in seen:
+            errors.append(f"policies.{section}: duplicate entry {item!r}")
+        seen.add(item)
+
+
+def _validate_retry_policy(value: Any, errors: list[str]) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        errors.append("policies.retry_policy: must be a mapping")
+        return
+    for field in sorted(RETRY_POLICY_INT_FIELDS - set(value)):
+        errors.append(f"policies.retry_policy.{field}: missing required field")
+    for field in sorted(set(value) - RETRY_POLICY_INT_FIELDS):
+        errors.append(f"policies.retry_policy.{field}: unknown field")
+    for field in sorted(RETRY_POLICY_INT_FIELDS & set(value)):
+        field_value = value[field]
+        if not isinstance(field_value, int) or isinstance(field_value, bool) or field_value < 0:
+            errors.append(f"policies.retry_policy.{field}: must be a non-negative integer")
+
+
+def _validate_lock_policy(value: Any, errors: list[str]) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        errors.append("policies.lock_policy: must be a mapping")
+        return
+    for field in sorted(set(LOCK_POLICY_SCHEMA) - set(value)):
+        errors.append(f"policies.lock_policy.{field}: missing required field")
+    for field in sorted(set(value) - set(LOCK_POLICY_SCHEMA)):
+        errors.append(f"policies.lock_policy.{field}: unknown field")
+    for field, expected_type in LOCK_POLICY_SCHEMA.items():
+        if field not in value:
+            continue
+        field_value = value[field]
+        if not isinstance(field_value, expected_type):
+            type_name = "boolean" if expected_type is bool else "string"
+            errors.append(f"policies.lock_policy.{field}: must be a {type_name}")
+    if value.get("authority") != "sqlite":
+        errors.append("policies.lock_policy.authority: must be 'sqlite'")
+    if value.get("scheduler_owns_locks") is not True:
+        errors.append("policies.lock_policy.scheduler_owns_locks: must be true")
+
+
+def _validate_policy_allowed_targets(policies: dict[str, Any], errors: list[str]) -> None:
+    allowed_targets = {
+        LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION: {"README.md", "OPERATOR.md", "AGENTS.md"},
+        LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION: {"tests/test_*.py"},
+        LIVE_CODEX_POLICY_FILE_ALLOWED_TARGETS_SECTION: {"app/policies.py"},
+        LIVE_CODEX_MODEL_FILE_ALLOWED_TARGETS_SECTION: {"app/models.py"},
+    }
+    for section, allowed_values in allowed_targets.items():
+        values = policies.get(section)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str) and value not in allowed_values:
+                errors.append(f"policies.{section}: {value!r} is not an approved Phase 2 target")
 
 
 def is_forbidden_live_codex_path(path: str) -> bool:

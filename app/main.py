@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.db import init_db, transaction
 from app.locks import active_locks
 from app.models import TASK_STATES
+from app.policies import validate_policy_registry
 from app.project_registry import get_project, load_projects, ordered_projects, project_context_for_task, validate_registry
 from app.router import (
     create_delegated_dry_run_task,
@@ -84,6 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     project_show = projects_subparsers.add_parser("show")
     project_show.add_argument("slug")
     projects_subparsers.add_parser("validate")
+
+    policies = subparsers.add_parser("policies")
+    policies_subparsers = policies.add_subparsers(dest="policies_command", required=True)
+    policies_subparsers.add_parser("validate")
 
     return parser
 
@@ -220,10 +225,35 @@ def print_project_detail(project: dict) -> None:
     print(f"allowed_agents: {_format_project_list(project['allowed_agents'])}")
     print(f"deployment_method: {project['deployment_method']}")
     print(f"notes: {project['notes']}")
+    print("write_policy:")
+    write_policy = project.get("write_policy")
+    if not isinstance(write_policy, dict):
+        print("  writable: false")
+        print("  source: absent; treated as non-writable")
+        return
+    print(f"  writable: {_format_bool(write_policy.get('writable'))}")
+    print(f"  allowed_write_agents: {_format_project_list(write_policy.get('allowed_write_agents') or [])}")
+    print(f"  allowed_lane: {_format_nullable(write_policy.get('allowed_lane'))}")
+    print(f"  max_changed_files: {_format_nullable(write_policy.get('max_changed_files'))}")
+    print(f"  allow_file_creation: {_format_bool(write_policy.get('allow_file_creation'))}")
+    print(f"  requires_human_approval: {_format_bool(write_policy.get('requires_human_approval'))}")
+    print(f"  deployment_allowed: {_format_bool(write_policy.get('deployment_allowed'))}")
 
 
 def _format_project_list(values: list[str]) -> str:
     return ", ".join(values) if values else "none"
+
+
+def _format_bool(value: object) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    return "unavailable"
+
+
+def _format_nullable(value: object) -> str:
+    if value is None:
+        return "null"
+    return str(value)
 
 
 def attach_task_metadata(task_id: str, metadata: dict) -> None:
@@ -263,6 +293,16 @@ def main(argv: list[str] | None = None) -> int:
                 print("Project registry is valid.")
                 return 0
             print("Project registry is invalid.")
+            for error in validation.errors:
+                print(f"- {error}")
+            return 1
+
+        if args.command == "policies" and args.policies_command == "validate":
+            validation = validate_policy_registry()
+            if validation.ok:
+                print("Policy registry is valid.")
+                return 0
+            print("Policy registry is invalid.")
             for error in validation.errors:
                 print(f"- {error}")
             return 1

@@ -127,12 +127,15 @@ live_codex_policy_file_required_symbols:
   - LIVE_CODEX_TESTS_ONLY_MODE
   - LIVE_CODEX_POLICY_FILE_ONLY_MODE
   - LIVE_CODEX_MAX_CHANGED_FILES
+  - PolicyRegistryValidation
   - READ_ONLY_ACTIONS
   - _read_yaml_list
   - assert_phase1_allowed
   - is_forbidden_live_codex_path
+  - load_policy_registry
   - live_codex_allowed_targets_for_mode
   - live_codex_model_file_allowed_targets
+  - validate_policy_registry
   - validate_live_codex_changed_files_for_mode
   - validate_live_codex_model_file_content
   - validate_live_codex_paths_for_mode
