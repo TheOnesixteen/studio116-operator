@@ -9,7 +9,7 @@ from app.db import init_db, transaction
 from app.locks import active_locks
 from app.models import TASK_STATES
 from app.policies import validate_policy_registry
-from app.project_registry import get_project, load_projects, ordered_projects, project_context_for_task, validate_registry
+from app.project_registry import get_project, load_projects, ordered_projects, preflight_project_write, project_context_for_task, validate_registry
 from app.router import (
     create_delegated_dry_run_task,
     create_health_check_task,
@@ -85,6 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     project_show = projects_subparsers.add_parser("show")
     project_show.add_argument("slug")
     projects_subparsers.add_parser("validate")
+    preflight_write = projects_subparsers.add_parser("preflight-write")
+    preflight_write.add_argument("slug")
+    preflight_write.add_argument("--lane", required=True)
+    preflight_write.add_argument("--worker", required=True)
 
     policies = subparsers.add_parser("policies")
     policies_subparsers = policies.add_subparsers(dest="policies_command", required=True)
@@ -240,6 +244,49 @@ def print_project_detail(project: dict) -> None:
     print(f"  deployment_allowed: {_format_bool(write_policy.get('deployment_allowed'))}")
 
 
+def print_external_write_preflight(result: dict) -> None:
+    project = result.get("project")
+    write_policy = result["write_policy"]
+    status = "authorized" if result["authorized"] else "blocked"
+    print(f"External write preflight: {status}")
+    print()
+    if isinstance(project, dict):
+        print(f"Project: {project['name']} ({project['slug']})")
+        print(f"Status: {project['status']}")
+        print(f"Repo: {project['repo_path']}")
+    else:
+        print(f"Project: {result['requested_project']}")
+    print(f"Requested worker: {result['requested_worker']}")
+    print(f"Requested lane: {result['requested_lane']}")
+    print()
+    print(f"Result: {result['result_code']}")
+    print()
+    if result["authorized"]:
+        print("Why authorized:")
+    else:
+        print("Why blocked:")
+    for reason in result["reasons"]:
+        print(f"- {reason}")
+    print()
+    print("Policy:")
+    if isinstance(project, dict):
+        print(f"- allowed_agents: {_format_project_list(project.get('allowed_agents') or [])}")
+    else:
+        print("- allowed_agents: unavailable")
+    print(f"- allowed_write_agents: {_format_project_list(write_policy.get('allowed_write_agents') or [])}")
+    print(f"- allowed_lane: {_format_nullable(write_policy.get('allowed_lane'))}")
+    print(f"- max_changed_files: {_format_nullable(write_policy.get('max_changed_files'))}")
+    print(f"- allow_file_creation: {_format_bool(write_policy.get('allow_file_creation'))}")
+    print(f"- requires_human_approval: {_format_bool(write_policy.get('requires_human_approval'))}")
+    print(f"- deployment_allowed: {_format_bool(write_policy.get('deployment_allowed'))}")
+    print()
+    print("Next:")
+    for action in result["next_actions"]:
+        print(f"- {action}")
+    if not result["authorized"]:
+        print("- This command did not create a worktree, launch Codex, promote patches, or deploy.")
+
+
 def _format_project_list(values: list[str]) -> str:
     return ", ".join(values) if values else "none"
 
@@ -296,6 +343,14 @@ def main(argv: list[str] | None = None) -> int:
             for error in validation.errors:
                 print(f"- {error}")
             return 1
+
+        if args.command == "projects" and args.projects_command == "preflight-write":
+            validation = validate_registry()
+            if not validation.ok:
+                raise ValueError("project registry is invalid; run scripts/operator projects validate")
+            result = preflight_project_write(args.slug, worker=args.worker, lane=args.lane)
+            print_external_write_preflight(result.__dict__)
+            return 0 if result.authorized else 1
 
         if args.command == "policies" and args.policies_command == "validate":
             validation = validate_policy_registry()

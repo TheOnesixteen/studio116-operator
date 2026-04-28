@@ -15,6 +15,15 @@ projects:
     allowed_agents:
       - codex
       - claude_code
+    write_policy:
+      writable: true
+      allowed_write_agents:
+        - codex
+      allowed_lane: docs_only
+      max_changed_files: 5
+      allow_file_creation: false
+      requires_human_approval: true
+      deployment_allowed: false
     deployment_method: manual
     status: active
     notes: "The Operator itself. Self-referential. Writable lanes govern all changes."

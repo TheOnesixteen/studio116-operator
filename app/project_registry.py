@@ -53,6 +53,19 @@ class ProjectRegistryValidation:
     errors: list[str]
 
 
+@dataclass(frozen=True)
+class ExternalWritePreflightResult:
+    result_code: str
+    authorized: bool
+    requested_project: str
+    requested_worker: str
+    requested_lane: str
+    project: dict[str, Any] | None
+    write_policy: dict[str, Any]
+    reasons: list[str]
+    next_actions: list[str]
+
+
 def projects_registry_path() -> Path:
     return get_settings().repo_root / "registry" / "projects.yaml"
 
@@ -123,6 +136,118 @@ def get_project(slug: str, path: Path | None = None) -> dict[str, Any]:
         raise KeyError(f"Unknown project slug: {slug}\nRun scripts/operator projects list to see known projects.") from exc
 
 
+def preflight_project_write(
+    slug: str,
+    *,
+    worker: str,
+    lane: str,
+    path: Path | None = None,
+) -> ExternalWritePreflightResult:
+    projects = load_projects(path)
+    project = projects.get(slug)
+    if project is None:
+        return ExternalWritePreflightResult(
+            result_code="unknown_project",
+            authorized=False,
+            requested_project=slug,
+            requested_worker=worker,
+            requested_lane=lane,
+            project=None,
+            write_policy=_default_non_writable_policy(),
+            reasons=[f"Project slug {slug!r} is not in registry/projects.yaml."],
+            next_actions=["Add the project to registry/projects.yaml before requesting external write preflight."],
+        )
+
+    raw_write_policy = project.get("write_policy")
+    if not isinstance(raw_write_policy, dict):
+        return ExternalWritePreflightResult(
+            result_code="known_non_writable",
+            authorized=False,
+            requested_project=slug,
+            requested_worker=worker,
+            requested_lane=lane,
+            project=project,
+            write_policy=_default_non_writable_policy(),
+            reasons=[
+                "Project is known in registry/projects.yaml.",
+                "write_policy is absent; absent policy is treated as non-writable.",
+                "No external write lane is authorized for this project.",
+            ],
+            next_actions=[
+                "Leave blocked, or update registry/projects.yaml write_policy in a future explicit policy phase.",
+            ],
+        )
+
+    write_policy = dict(raw_write_policy)
+    if write_policy.get("writable") is not True:
+        return ExternalWritePreflightResult(
+            result_code="known_non_writable",
+            authorized=False,
+            requested_project=slug,
+            requested_worker=worker,
+            requested_lane=lane,
+            project=project,
+            write_policy=write_policy,
+            reasons=[
+                "Project is known in registry/projects.yaml.",
+                "write_policy.writable is false.",
+                "No external write lane is authorized for this project.",
+            ],
+            next_actions=[
+                "Leave blocked, or update registry/projects.yaml write_policy in a future explicit policy phase.",
+            ],
+        )
+
+    reasons: list[str] = []
+    allowed_agents = project.get("allowed_agents") if isinstance(project.get("allowed_agents"), list) else []
+    allowed_write_agents = (
+        write_policy.get("allowed_write_agents") if isinstance(write_policy.get("allowed_write_agents"), list) else []
+    )
+    allowed_lane = write_policy.get("allowed_lane")
+
+    if worker not in allowed_agents:
+        reasons.append(f"Requested worker {worker} is not in project allowed_agents.")
+    if worker not in allowed_write_agents:
+        reasons.append(f"Requested worker {worker} is not in write_policy.allowed_write_agents.")
+    if lane != allowed_lane:
+        reasons.append(f"Requested lane {lane} does not match write_policy.allowed_lane {_format_policy_value(allowed_lane)}.")
+    if write_policy.get("deployment_allowed") is True:
+        reasons.append("write_policy.deployment_allowed is true, but Phase 2.10b never performs deployment.")
+
+    if reasons:
+        return ExternalWritePreflightResult(
+            result_code="writable_no_lane_authorized",
+            authorized=False,
+            requested_project=slug,
+            requested_worker=worker,
+            requested_lane=lane,
+            project=project,
+            write_policy=write_policy,
+            reasons=reasons,
+            next_actions=[
+                "Review registry/projects.yaml write_policy before requesting a later external dry-run phase.",
+            ],
+        )
+
+    return ExternalWritePreflightResult(
+        result_code="writable_lane_authorized",
+        authorized=True,
+        requested_project=slug,
+        requested_worker=worker,
+        requested_lane=lane,
+        project=project,
+        write_policy=write_policy,
+        reasons=[
+            "Project is known in registry/projects.yaml.",
+            "write_policy.writable is true.",
+            "Policy allows this worker/lane combination.",
+        ],
+        next_actions=[
+            "This is preflight-only. No worktree, worker launch, promotion, or deployment occurred.",
+        ],
+    )
+
+
 def project_context_for_task(slug: str, path: Path | None = None) -> dict[str, Any]:
     validation = validate_registry(path)
     if not validation.ok:
@@ -146,6 +271,22 @@ def project_context_for_task(slug: str, path: Path | None = None) -> dict[str, A
         },
         "project_context_source": PROJECT_CONTEXT_SOURCE,
     }
+
+
+def _default_non_writable_policy() -> dict[str, Any]:
+    return {
+        "writable": False,
+        "allowed_write_agents": [],
+        "allowed_lane": None,
+        "max_changed_files": 1,
+        "allow_file_creation": False,
+        "requires_human_approval": True,
+        "deployment_allowed": False,
+    }
+
+
+def _format_policy_value(value: Any) -> str:
+    return "null" if value is None else str(value)
 
 
 def _validate_nonempty_string(project: dict[str, Any], field: str, prefix: str, errors: list[str]) -> None:
