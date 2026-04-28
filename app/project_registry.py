@@ -25,6 +25,7 @@ REQUIRED_PROJECT_FIELDS = {
     "status",
     "notes",
 }
+PROJECT_CONTEXT_SOURCE = "registry/projects.yaml"
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
@@ -107,7 +108,32 @@ def get_project(slug: str, path: Path | None = None) -> dict[str, Any]:
     try:
         return projects[slug]
     except KeyError as exc:
-        raise KeyError(f"unknown project: {slug}") from exc
+        raise KeyError(f"Unknown project slug: {slug}\nRun scripts/operator projects list to see known projects.") from exc
+
+
+def project_context_for_task(slug: str, path: Path | None = None) -> dict[str, Any]:
+    validation = validate_registry(path)
+    if not validation.ok:
+        raise ValueError("project registry is invalid; run scripts/operator projects validate")
+    projects = load_projects(path)
+    project = projects.get(slug)
+    if project is None:
+        raise ValueError(f"Unknown project slug: {slug}\nRun scripts/operator projects list to see known projects.")
+    return {
+        "project_context": {
+            "slug": project["slug"],
+            "name": project["name"],
+            "repo_path": project["repo_path"],
+            "stack": list(project["stack"]),
+            "domains": list(project["domains"]),
+            "services": list(project["services"]),
+            "allowed_agents": list(project["allowed_agents"]),
+            "deployment_method": project["deployment_method"],
+            "status": project["status"],
+            "notes": project["notes"],
+        },
+        "project_context_source": PROJECT_CONTEXT_SOURCE,
+    }
 
 
 def _validate_nonempty_string(project: dict[str, Any], field: str, prefix: str, errors: list[str]) -> None:

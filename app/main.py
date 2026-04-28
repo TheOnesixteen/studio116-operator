@@ -5,10 +5,10 @@ import json
 import sys
 
 from app.config import get_settings
-from app.db import init_db
+from app.db import init_db, transaction
 from app.locks import active_locks
 from app.models import TASK_STATES
-from app.project_registry import get_project, load_projects, ordered_projects, validate_registry
+from app.project_registry import get_project, load_projects, ordered_projects, project_context_for_task, validate_registry
 from app.router import (
     create_delegated_dry_run_task,
     create_health_check_task,
@@ -187,6 +187,18 @@ def _format_project_list(values: list[str]) -> str:
     return ", ".join(values) if values else "none"
 
 
+def attach_task_metadata(task_id: str, metadata: dict) -> None:
+    if not metadata:
+        return
+    with transaction() as conn:
+        row = conn.execute("SELECT metadata_json FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            return
+        existing = json.loads(row["metadata_json"] or "{}")
+        existing.update(metadata)
+        conn.execute("UPDATE tasks SET metadata_json = ? WHERE id = ?", (json.dumps(existing, sort_keys=True), task_id))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -216,9 +228,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"- {error}")
             return 1
 
-        init_db()
-
         if args.command == "task" and args.task_command == "create":
+            project_metadata = project_context_for_task(args.project)
+            init_db()
             if args.task_type == "delegated":
                 if not args.worker:
                     raise ValueError("--worker is required for delegated tasks")
@@ -279,9 +291,13 @@ def main(argv: list[str] | None = None) -> int:
                     goal=args.goal,
                     priority=args.priority,
                     requested_by=args.requested_by,
+                    metadata=project_metadata,
                 )
+            attach_task_metadata(task_id, project_metadata)
             print(task_id)
             return 0
+
+        init_db()
 
         if args.command == "task" and args.task_command == "show":
             print(json.dumps(show_task(args.task_id), indent=2, sort_keys=True))
