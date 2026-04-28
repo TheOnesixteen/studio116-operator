@@ -9,7 +9,15 @@ from app.db import init_db, transaction
 from app.locks import active_locks
 from app.models import TASK_STATES
 from app.policies import validate_policy_registry
-from app.project_registry import get_project, load_projects, ordered_projects, preflight_project_write, project_context_for_task, validate_registry
+from app.project_registry import (
+    dry_run_external_worktree,
+    get_project,
+    load_projects,
+    ordered_projects,
+    preflight_project_write,
+    project_context_for_task,
+    validate_registry,
+)
 from app.router import (
     create_delegated_dry_run_task,
     create_health_check_task,
@@ -89,6 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
     preflight_write.add_argument("slug")
     preflight_write.add_argument("--lane", required=True)
     preflight_write.add_argument("--worker", required=True)
+    dry_run_worktree = projects_subparsers.add_parser("dry-run-worktree")
+    dry_run_worktree.add_argument("slug")
+    dry_run_worktree.add_argument("--lane", required=True)
+    dry_run_worktree.add_argument("--worker", required=True)
 
     policies = subparsers.add_parser("policies")
     policies_subparsers = policies.add_subparsers(dest="policies_command", required=True)
@@ -287,6 +299,73 @@ def print_external_write_preflight(result: dict) -> None:
         print("- This command did not create a worktree, launch Codex, promote patches, or deploy.")
 
 
+def print_external_worktree_dry_run(result: dict) -> None:
+    project = result.get("project")
+    preflight = result["preflight"]
+    repo_checks = result["repo_checks"]
+    worktree_plan = result["worktree_plan"]
+    status = "would be safe" if result["safe"] else "blocked"
+    print(f"External worktree dry-run: {status}")
+    print()
+    if isinstance(project, dict):
+        print(f"Project: {project['name']} ({project['slug']})")
+        print(f"Status: {project['status']}")
+        print(f"Repo: {project['repo_path']}")
+    else:
+        print(f"Project: {preflight.requested_project}")
+    print(f"Requested worker: {preflight.requested_worker}")
+    print(f"Requested lane: {preflight.requested_lane}")
+    print()
+    print("Policy preflight:")
+    print(f"- result: {preflight.result_code}")
+    print(f"- authorized: {_format_bool(preflight.authorized)}")
+    if isinstance(project, dict):
+        write_policy = preflight.write_policy
+        print(f"- allowed_agents: {_format_project_list(project.get('allowed_agents') or [])}")
+        print(f"- allowed_write_agents: {_format_project_list(write_policy.get('allowed_write_agents') or [])}")
+        print(f"- allowed_lane: {_format_nullable(write_policy.get('allowed_lane'))}")
+        print(f"- max_changed_files: {_format_nullable(write_policy.get('max_changed_files'))}")
+        print(f"- deployment_allowed: {_format_bool(write_policy.get('deployment_allowed'))}")
+    print()
+    print(f"Result: {result['result_code']}")
+    print()
+    if result["safe"]:
+        print("Why safe:")
+    else:
+        print("Why blocked:")
+    for reason in result["reasons"]:
+        print(f"- {reason}")
+    if repo_checks:
+        print()
+        print("Canonical repo checks:")
+        print(f"- repo_path exists: {_format_bool(repo_checks.get('exists'))}")
+        print(f"- repo_path is directory: {_format_bool(repo_checks.get('is_directory'))}")
+        print(f"- git work tree: {repo_checks.get('is_git_work_tree') or 'unavailable'}")
+        print(f"- git top level: {repo_checks.get('git_top_level') or 'unavailable'}")
+        print(f"- HEAD: {repo_checks.get('head') or 'unavailable'}")
+        clean = repo_checks.get("status_porcelain") == ""
+        print(f"- canonical repo clean: {_format_bool(clean)}")
+    if worktree_plan:
+        print()
+        print("Intended worktree plan:")
+        print(f"- worktree path: {worktree_plan.get('worktree_path')}")
+        print(f"- worktree path under runtime/worktrees: {_format_bool(worktree_plan.get('worktree_path_under_runtime_worktrees'))}")
+        print(f"- worktree path already exists: {_format_bool(worktree_plan.get('worktree_path_exists'))}")
+        print(f"- branch name: {worktree_plan.get('branch_name')}")
+        print(f"- command not run: {worktree_plan.get('intended_command')}")
+    print()
+    print("Next:")
+    for action in result["next_actions"]:
+        print(f"- {action}")
+    if result["safe"]:
+        print("- no worktree was created")
+        print("- no worker was launched")
+        print("- no patch was promoted")
+        print("- no deployment occurred")
+    else:
+        print("- This command did not create a worktree, launch Codex, promote patches, or deploy.")
+
+
 def _format_project_list(values: list[str]) -> str:
     return ", ".join(values) if values else "none"
 
@@ -351,6 +430,14 @@ def main(argv: list[str] | None = None) -> int:
             result = preflight_project_write(args.slug, worker=args.worker, lane=args.lane)
             print_external_write_preflight(result.__dict__)
             return 0 if result.authorized else 1
+
+        if args.command == "projects" and args.projects_command == "dry-run-worktree":
+            validation = validate_registry()
+            if not validation.ok:
+                raise ValueError("project registry is invalid; run scripts/operator projects validate")
+            result = dry_run_external_worktree(args.slug, worker=args.worker, lane=args.lane)
+            print_external_worktree_dry_run(result.__dict__)
+            return 0 if result.safe else 1
 
         if args.command == "policies" and args.policies_command == "validate":
             validation = validate_policy_registry()

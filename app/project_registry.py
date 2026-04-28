@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from app.config import get_settings
+from tools.git_tools import git_head, git_is_inside_work_tree, git_status_porcelain, git_top_level, slugify
 
 
 ALLOWED_AGENTS = {"codex", "claude_code", "n8n"}
@@ -62,6 +63,18 @@ class ExternalWritePreflightResult:
     requested_lane: str
     project: dict[str, Any] | None
     write_policy: dict[str, Any]
+    reasons: list[str]
+    next_actions: list[str]
+
+
+@dataclass(frozen=True)
+class ExternalWorktreeDryRunResult:
+    result_code: str
+    safe: bool
+    preflight: ExternalWritePreflightResult
+    project: dict[str, Any] | None
+    repo_checks: dict[str, Any]
+    worktree_plan: dict[str, Any]
     reasons: list[str]
     next_actions: list[str]
 
@@ -248,6 +261,174 @@ def preflight_project_write(
     )
 
 
+def dry_run_external_worktree(
+    slug: str,
+    *,
+    worker: str,
+    lane: str,
+    path: Path | None = None,
+) -> ExternalWorktreeDryRunResult:
+    preflight = preflight_project_write(slug, worker=worker, lane=lane, path=path)
+    if not preflight.authorized:
+        return ExternalWorktreeDryRunResult(
+            result_code="policy_blocked",
+            safe=False,
+            preflight=preflight,
+            project=preflight.project,
+            repo_checks={},
+            worktree_plan={},
+            reasons=["External write preflight did not authorize this request.", *preflight.reasons],
+            next_actions=preflight.next_actions,
+        )
+
+    project = preflight.project
+    if project is None:
+        return ExternalWorktreeDryRunResult(
+            result_code="policy_blocked",
+            safe=False,
+            preflight=preflight,
+            project=None,
+            repo_checks={},
+            worktree_plan={},
+            reasons=["Project context is unavailable after external write preflight."],
+            next_actions=["Rerun scripts/operator projects validate and retry."],
+        )
+
+    settings = get_settings()
+    repo_path = Path(project["repo_path"])
+    repo_resolved = repo_path.resolve()
+    operator_root = settings.repo_root.resolve()
+
+    unsafe_reasons: list[str] = []
+    if slug != "operator":
+        if repo_resolved == operator_root:
+            unsafe_reasons.append("External canonical repo must not be the Operator repo.")
+        if operator_root in repo_resolved.parents:
+            unsafe_reasons.append("External canonical repo must not be inside the Operator repo.")
+    if unsafe_reasons:
+        return _blocked_worktree_dry_run(
+            "canonical_repo_unsafe_path",
+            preflight=preflight,
+            project=project,
+            repo_checks={"repo_path": str(repo_path), "repo_path_resolved": str(repo_resolved)},
+            reasons=unsafe_reasons,
+            next_actions=["Use the canonical repo path recorded in registry/projects.yaml, outside the Operator checkout."],
+        )
+
+    if not repo_path.exists():
+        return _blocked_worktree_dry_run(
+            "canonical_repo_missing",
+            preflight=preflight,
+            project=project,
+            repo_checks={"repo_path": str(repo_path), "exists": False},
+            reasons=["repo_path does not exist."],
+            next_actions=["Create or clone the canonical repo at the registry repo_path, then rerun this dry-run."],
+        )
+    if not repo_path.is_dir():
+        return _blocked_worktree_dry_run(
+            "canonical_repo_missing",
+            preflight=preflight,
+            project=project,
+            repo_checks={"repo_path": str(repo_path), "exists": True, "is_directory": False},
+            reasons=["repo_path is not a directory."],
+            next_actions=["Fix registry/projects.yaml repo_path or replace it with a git repository directory."],
+        )
+
+    inside_result = git_is_inside_work_tree(repo_path=repo_path)
+    top_level_result = git_top_level(repo_path=repo_path)
+    head_result = git_head(worktree_path=repo_path)
+    repo_checks: dict[str, Any] = {
+        "repo_path": str(repo_path),
+        "repo_path_resolved": str(repo_resolved),
+        "exists": True,
+        "is_directory": True,
+        "is_git_work_tree": inside_result.stdout.strip(),
+        "git_top_level": top_level_result.stdout.strip(),
+        "head": head_result.stdout.strip(),
+    }
+    if inside_result.exit_code != 0 or inside_result.stdout.strip() != "true":
+        return _blocked_worktree_dry_run(
+            "canonical_repo_not_git",
+            preflight=preflight,
+            project=project,
+            repo_checks=repo_checks,
+            reasons=["repo_path is not a git work tree."],
+            next_actions=["Initialize or clone a git repository at repo_path, then rerun this dry-run."],
+        )
+    if top_level_result.exit_code != 0 or Path(top_level_result.stdout.strip()).resolve() != repo_resolved:
+        return _blocked_worktree_dry_run(
+            "canonical_repo_not_git",
+            preflight=preflight,
+            project=project,
+            repo_checks=repo_checks,
+            reasons=["git top-level does not resolve to repo_path."],
+            next_actions=["Point registry/projects.yaml repo_path at the canonical git repository root."],
+        )
+    if head_result.exit_code != 0 or not head_result.stdout.strip():
+        return _blocked_worktree_dry_run(
+            "canonical_repo_not_git",
+            preflight=preflight,
+            project=project,
+            repo_checks=repo_checks,
+            reasons=["git HEAD could not be resolved."],
+            next_actions=["Create an initial commit in the canonical repo, then rerun this dry-run."],
+        )
+
+    status_result = git_status_porcelain(repo_path=repo_path)
+    repo_checks["status_porcelain"] = status_result.stdout
+    if status_result.exit_code != 0:
+        return _blocked_worktree_dry_run(
+            "canonical_repo_not_git",
+            preflight=preflight,
+            project=project,
+            repo_checks=repo_checks,
+            reasons=["git status --porcelain failed."],
+            next_actions=["Inspect the canonical repo manually, then rerun this dry-run."],
+        )
+    if status_result.stdout.strip():
+        return _blocked_worktree_dry_run(
+            "canonical_repo_dirty",
+            preflight=preflight,
+            project=project,
+            repo_checks=repo_checks,
+            reasons=["Canonical repo has uncommitted changes."],
+            next_actions=["Review and commit, stash, or discard canonical repo changes before external worktree dry-run can pass."],
+        )
+
+    worktree_plan = _external_worktree_plan(slug=slug, worker=worker, lane=lane, repo_path=repo_path)
+    if not worktree_plan["worktree_path_under_runtime_worktrees"]:
+        return _blocked_worktree_dry_run(
+            "canonical_repo_unsafe_path",
+            preflight=preflight,
+            project=project,
+            repo_checks=repo_checks,
+            worktree_plan=worktree_plan,
+            reasons=["Intended worktree path is not under Operator runtime/worktrees."],
+            next_actions=["Fix Operator runtime configuration before attempting external worktree creation."],
+        )
+    if Path(worktree_plan["worktree_path"]).exists():
+        return _blocked_worktree_dry_run(
+            "worktree_path_collision",
+            preflight=preflight,
+            project=project,
+            repo_checks=repo_checks,
+            worktree_plan=worktree_plan,
+            reasons=["Intended worktree path already exists."],
+            next_actions=["Remove or choose a different external worktree dry-run path in a later explicit phase."],
+        )
+
+    return ExternalWorktreeDryRunResult(
+        result_code="dry_run_safe",
+        safe=True,
+        preflight=preflight,
+        project=project,
+        repo_checks=repo_checks,
+        worktree_plan=worktree_plan,
+        reasons=["Dry-run passed; worktree creation would be safe to attempt in a later phase."],
+        next_actions=["No worktree was created. No worker was launched. No patch was promoted. No deployment occurred."],
+    )
+
+
 def project_context_for_task(slug: str, path: Path | None = None) -> dict[str, Any]:
     validation = validate_registry(path)
     if not validation.ok:
@@ -287,6 +468,48 @@ def _default_non_writable_policy() -> dict[str, Any]:
 
 def _format_policy_value(value: Any) -> str:
     return "null" if value is None else str(value)
+
+
+def _blocked_worktree_dry_run(
+    result_code: str,
+    *,
+    preflight: ExternalWritePreflightResult,
+    project: dict[str, Any] | None,
+    repo_checks: dict[str, Any],
+    reasons: list[str],
+    next_actions: list[str],
+    worktree_plan: dict[str, Any] | None = None,
+) -> ExternalWorktreeDryRunResult:
+    return ExternalWorktreeDryRunResult(
+        result_code=result_code,
+        safe=False,
+        preflight=preflight,
+        project=project,
+        repo_checks=repo_checks,
+        worktree_plan=worktree_plan or {},
+        reasons=reasons,
+        next_actions=next_actions,
+    )
+
+
+def _external_worktree_plan(*, slug: str, worker: str, lane: str, repo_path: Path) -> dict[str, Any]:
+    settings = get_settings()
+    worktree_path = settings.worktrees_dir / "external" / slug / worker / lane
+    resolved_worktree_path = worktree_path.resolve()
+    runtime_worktrees = settings.worktrees_dir.resolve()
+    branch_name = f"operator/external/{slugify(slug)}/{slugify(worker)}/{slugify(lane)}"
+    intended_command = (
+        f"git -C {repo_path} worktree add -B {branch_name} {worktree_path} HEAD"
+    )
+    return {
+        "worktree_path": str(worktree_path),
+        "worktree_path_resolved": str(resolved_worktree_path),
+        "worktree_path_under_runtime_worktrees": runtime_worktrees in [resolved_worktree_path, *resolved_worktree_path.parents],
+        "worktree_path_exists": worktree_path.exists(),
+        "branch_name": branch_name,
+        "intended_command": intended_command,
+        "command_ran": False,
+    }
 
 
 def _validate_nonempty_string(project: dict[str, Any], field: str, prefix: str, errors: list[str]) -> None:

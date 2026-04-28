@@ -37,6 +37,39 @@ def create_worktree(*, repo_path: Path, worktree_path: Path, branch_name: str) -
     )
 
 
+def git_is_inside_work_tree(*, repo_path: Path) -> CommandResult:
+    command = ["git", "-C", str(repo_path), "rev-parse", "--is-inside-work-tree"]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
+def git_top_level(*, repo_path: Path) -> CommandResult:
+    command = ["git", "-C", str(repo_path), "rev-parse", "--show-toplevel"]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
+def git_status_porcelain(*, repo_path: Path) -> CommandResult:
+    command = ["git", "-C", str(repo_path), "status", "--porcelain"]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    return CommandResult(
+        command=" ".join(command),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
+
+
 def git_diff(*, worktree_path: Path) -> CommandResult:
     command = ["git", "-C", str(worktree_path), "diff", "--no-ext-diff"]
     completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
