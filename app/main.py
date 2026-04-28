@@ -92,6 +92,45 @@ def print_task_summary(task: dict) -> None:
     print(f"{task['id']}  {task['status']}  {task['project']}  {task['title']}")
 
 
+def print_task_show(task_view: dict) -> None:
+    metadata = _task_metadata(task_view["task"])
+    project_context = metadata.get("project_context")
+    if not isinstance(project_context, dict):
+        print(json.dumps(task_view, indent=2, sort_keys=True))
+        return
+
+    task = task_view["task"]
+    print("Task")
+    print(f"  id: {task['id']}")
+    print(f"  title: {task['title']}")
+    print(f"  status: {task['status']}")
+    print(f"  project: {task['project']}")
+    print()
+    print("Project context")
+    print(f"  slug: {project_context.get('slug') or 'unavailable'}")
+    print(f"  name: {project_context.get('name') or 'unavailable'}")
+    print(f"  repo_path: {project_context.get('repo_path') or 'unavailable'}")
+    print(f"  stack: {_format_project_list(project_context.get('stack') or [])}")
+    print(f"  domains: {_format_project_list(project_context.get('domains') or [])}")
+    print(f"  services: {_format_project_list(project_context.get('services') or [])}")
+    print(f"  allowed_agents: {_format_project_list(project_context.get('allowed_agents') or [])}")
+    print(f"  deployment_method: {project_context.get('deployment_method') or 'unavailable'}")
+    print(f"  status: {project_context.get('status') or 'unavailable'}")
+    print(f"  notes: {project_context.get('notes') or 'unavailable'}")
+    print(f"  source: {metadata.get('project_context_source') or 'unavailable'}")
+    print()
+    print("Raw task JSON")
+    print(json.dumps(task_view, indent=2, sort_keys=True))
+
+
+def _task_metadata(task: dict) -> dict:
+    try:
+        metadata = json.loads(task.get("metadata_json") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
 def print_task_inbox(inbox: dict) -> None:
     if inbox["task_count"] == 0:
         print("No tasks found. Operator is idle.")
@@ -300,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
         init_db()
 
         if args.command == "task" and args.task_command == "show":
-            print(json.dumps(show_task(args.task_id), indent=2, sort_keys=True))
+            print_task_show(show_task(args.task_id))
             return 0
 
         if args.command == "task" and args.task_command == "approve":
