@@ -178,11 +178,13 @@ projects:
       - claude_code
       - gemini_cli
     write_policy:
-      writable: false
-      allowed_write_agents: []
-      allowed_lane: null
-      max_changed_files: 1
-      allow_file_creation: false
+      writable: true
+      allowed_write_agents:
+        - codex
+        - claude_code
+      allowed_lane: docs/**
+      max_changed_files: 3
+      allow_file_creation: true
       requires_human_approval: true
       deployment_allowed: false
     deployment_method: droplet_systemd
