@@ -39,6 +39,7 @@ from app.policies import (
     LIVE_CODEX_TESTS_ONLY_TARGETS,
     LIVE_CODEX_TIMEOUT_SECONDS,
     live_codex_allowed_targets_for_mode,
+    live_codex_docs_only_allowed_targets_for_project,
     live_codex_docs_only_project_max_changed_files,
     live_codex_model_file_preflight_checks,
     live_codex_policy_file_preflight_checks,
@@ -1298,6 +1299,11 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
         )
         mode_label = "docs-only"
     preflight_passed = all(check["passed"] for check in preflight_checks)
+    allowed_targets = (
+        live_codex_docs_only_allowed_targets_for_project(task["project"], worker or "")
+        if mode == LIVE_CODEX_DOCS_ONLY_MODE
+        else live_codex_allowed_targets_for_mode(mode)
+    )
     write_json_artifact(
         task_id=task["id"],
         run_id=run_id,
@@ -1309,7 +1315,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
             "passed": preflight_passed,
             "checks": preflight_checks,
             "target_paths": target_paths,
-            "allowed_targets": live_codex_allowed_targets_for_mode(mode),
+            "allowed_targets": allowed_targets,
             "timeout_seconds": LIVE_CODEX_TIMEOUT_SECONDS,
             "worktree_path": str(worktree_path),
             "branch_name": branch_name,
@@ -1353,7 +1359,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
             **packet,
             "target_paths": target_paths,
             "timeout_seconds": LIVE_CODEX_TIMEOUT_SECONDS,
-            "allowed_targets": live_codex_allowed_targets_for_mode(mode),
+            "allowed_targets": allowed_targets,
         },
     )
 
@@ -1418,7 +1424,12 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
     current_head_result = git_head(worktree_path=worktree_path)
     record_worker_execution(run_id, "shell_ops", current_head_result)
     changed_files = [line.strip() for line in changed_result.stdout.splitlines() if line.strip()]
-    post_run_checks = validate_live_codex_changed_files_for_mode(mode, changed_files)
+    post_run_checks = validate_live_codex_changed_files_for_mode(
+        mode,
+        changed_files,
+        project=task["project"],
+        worker=worker or "",
+    )
     post_run_checks.extend(_live_codex_content_checks(worktree_path, changed_files, mode))
     if mode == LIVE_CODEX_DOCS_ONLY_MODE:
         project_max_changed_files = live_codex_docs_only_project_max_changed_files(task["project"], worker or "")

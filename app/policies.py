@@ -87,6 +87,7 @@ LIVE_CODEX_TESTS_ONLY_MODE = "live_codex_tests_only"
 LIVE_CODEX_POLICY_FILE_ONLY_MODE = "live_codex_policy_file_only"
 LIVE_CODEX_MODEL_FILE_ONLY_MODE = "live_codex_model_file_only"
 LIVE_CODEX_DOCS_ONLY_TARGETS = ["README.md"]
+LIVE_CODEX_EXTERNAL_DOCS_ONLY_TARGETS = ["docs/*.md"]
 LIVE_CODEX_TESTS_ONLY_TARGETS = ["tests/test_*.py"]
 LIVE_CODEX_POLICY_FILE_ONLY_TARGETS = ["app/policies.py", "app/project_registry.py"]
 LIVE_CODEX_MODEL_FILE_ONLY_TARGETS = ["app/models.py", "app/project_registry.py"]
@@ -374,6 +375,26 @@ def live_codex_docs_only_allowed_targets() -> list[str]:
     return sorted(configured) if configured else list(LIVE_CODEX_DOCS_ONLY_TARGETS)
 
 
+def _external_docs_project_preflight(project: str, worker: str):
+    if project == "operator":
+        return None
+    from app.project_registry import preflight_project_write
+
+    return preflight_project_write(project, worker=worker, lane="docs_only")
+
+
+def live_codex_docs_only_allowed_targets_for_project(project: str, worker: str) -> list[str]:
+    allowed_targets = live_codex_docs_only_allowed_targets()
+    external_preflight = _external_docs_project_preflight(project, worker)
+    if (
+        external_preflight is not None
+        and external_preflight.authorized
+        and external_preflight.write_policy.get("allowed_lane") == "docs_only"
+    ):
+        allowed_targets = [*allowed_targets, *LIVE_CODEX_EXTERNAL_DOCS_ONLY_TARGETS]
+    return sorted(allowed_targets)
+
+
 def live_codex_tests_only_allowed_targets() -> list[str]:
     configured = _read_yaml_list(get_settings().policies_path, LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION)
     return sorted(configured) if configured else list(LIVE_CODEX_TESTS_ONLY_TARGETS)
@@ -486,11 +507,20 @@ def _path_is_repo_relative(path: str) -> bool:
 
 
 def _path_matches_allowed_target(path: str, allowed_targets: list[str]) -> bool:
+    if "docs/*.md" in allowed_targets and _path_matches_external_docs_target(path):
+        return True
     return any(fnmatchcase(path, allowed) for allowed in allowed_targets)
 
 
-def validate_live_codex_docs_only_paths(paths: list[str]) -> list[dict]:
-    allowed_targets = live_codex_docs_only_allowed_targets()
+def _path_matches_external_docs_target(path: str) -> bool:
+    if not path.startswith("docs/") or not path.endswith(".md"):
+        return False
+    remainder = path.removeprefix("docs/")
+    return bool(remainder) and "/" not in remainder
+
+
+def validate_live_codex_docs_only_paths(paths: list[str], *, project: str = "operator", worker: str = "codex") -> list[dict]:
+    allowed_targets = live_codex_docs_only_allowed_targets_for_project(project, worker)
     return [
         {
             "name": "path_count_at_least_1",
@@ -678,14 +708,6 @@ def validate_live_codex_paths_for_mode(mode: str, paths: list[str]) -> list[dict
     return validate_live_codex_docs_only_paths(paths)
 
 
-def _external_docs_project_preflight(project: str, worker: str):
-    if project == "operator":
-        return None
-    from app.project_registry import preflight_project_write
-
-    return preflight_project_write(project, worker=worker, lane="docs_only")
-
-
 def live_codex_preflight_checks(
     *,
     project: str,
@@ -704,7 +726,7 @@ def live_codex_preflight_checks(
     worktree_resolved = worktree_path.resolve()
     runtime_worktrees = get_settings().worktrees_dir.resolve()
     goal_blob = goal.lower()
-    target_path_checks = validate_live_codex_docs_only_paths(target_paths)
+    target_path_checks = validate_live_codex_docs_only_paths(target_paths, project=project, worker=worker)
     external_preflight = _external_docs_project_preflight(project, worker)
     external_project = external_preflight.project if external_preflight is not None else None
     expected_repo_root = (
@@ -926,8 +948,13 @@ def _live_codex_changed_file_checks(
     return checks + path_checks
 
 
-def validate_live_codex_changed_files(changed_files: list[str]) -> list[dict]:
-    path_checks = validate_live_codex_docs_only_paths(changed_files)
+def validate_live_codex_changed_files(
+    changed_files: list[str],
+    *,
+    project: str = "operator",
+    worker: str = "codex",
+) -> list[dict]:
+    path_checks = validate_live_codex_docs_only_paths(changed_files, project=project, worker=worker)
     return _live_codex_changed_file_checks(
         changed_files=changed_files,
         path_checks=path_checks,
@@ -936,7 +963,7 @@ def validate_live_codex_changed_files(changed_files: list[str]) -> list[dict]:
             "passed": len(changed_files) <= LIVE_CODEX_MAX_CHANGED_FILES,
             "details": {"count": len(changed_files), "max": LIVE_CODEX_MAX_CHANGED_FILES},
         },
-        allowed_targets=live_codex_docs_only_allowed_targets(),
+        allowed_targets=live_codex_docs_only_allowed_targets_for_project(project, worker),
     )
 
 
@@ -1286,11 +1313,17 @@ def validate_live_codex_model_file_content(worktree_path: Path, changed_files: l
     )
 
 
-def validate_live_codex_changed_files_for_mode(mode: str, changed_files: list[str]) -> list[dict]:
+def validate_live_codex_changed_files_for_mode(
+    mode: str,
+    changed_files: list[str],
+    *,
+    project: str = "operator",
+    worker: str = "codex",
+) -> list[dict]:
     if mode == LIVE_CODEX_MODEL_FILE_ONLY_MODE:
         return validate_live_codex_model_file_changed_files(changed_files)
     if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
         return validate_live_codex_policy_file_changed_files(changed_files)
     if mode == LIVE_CODEX_TESTS_ONLY_MODE:
         return validate_live_codex_tests_only_changed_files(changed_files)
-    return validate_live_codex_changed_files(changed_files)
+    return validate_live_codex_changed_files(changed_files, project=project, worker=worker)
