@@ -103,6 +103,42 @@ class DelegationDryRunTests(unittest.TestCase):
         self.assertIn("116studio-ai --read-only", intended["command"])
         create_worktree.assert_not_called()
 
+    def test_gemini_dry_run_is_read_only_and_does_not_create_worktree(self):
+        runtime_dir = "/tmp/studio116-operator-test-delegation-gemini"
+        db_path = _reset_runtime(runtime_dir)
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree") as create_worktree:
+                task_id = create_delegated_dry_run_task(
+                    project="operator",
+                    title="Gemini review",
+                    goal="Prepare a read-only Gemini review packet",
+                    worker="gemini_cli",
+                )
+                result = run_next(task_id)
+
+            task_view = show_task(task_id)
+            run = task_view["runs"][0]
+            packet_artifact = next(
+                artifact for artifact in task_view["artifacts"] if artifact["artifact_type"] == "worker_packet"
+            )
+            packet = json.loads(Path(packet_artifact["path"]).read_text(encoding="utf-8"))
+            with transaction() as conn:
+                intended = conn.execute(
+                    "SELECT * FROM worker_executions WHERE run_id = ? AND worker_name = 'gemini_cli'",
+                    (run["id"],),
+                ).fetchone()
+
+        self.assertTrue(result["task_succeeded"])
+        self.assertEqual(run["worker_name"], "gemini_cli")
+        self.assertIsNone(run["worktree_path"])
+        self.assertIsNone(run["branch_name"])
+        self.assertTrue(packet["read_only"])
+        self.assertIsNone(packet["worktree_path"])
+        self.assertIn("delegate_read_only", packet["allowed_actions"])
+        self.assertIn("Do not modify files", intended["command"])
+        create_worktree.assert_not_called()
+
     def test_one_writable_codex_lock_blocks_second_delegated_writer(self):
         runtime_dir = "/tmp/studio116-operator-test-delegation-lock"
         db_path = _reset_runtime(runtime_dir)

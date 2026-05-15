@@ -18,6 +18,7 @@ from app.task_engine import approve_task, reject_task, show_task
 
 
 POLICY_PATH = "app/policies.py"
+PROJECT_REGISTRY_PATH = "app/project_registry.py"
 POLICY_DIFF = (
     "diff --git a/app/policies.py b/app/policies.py\n"
     "--- a/app/policies.py\n"
@@ -100,10 +101,13 @@ def _artifact_data(task_view: dict, artifact_type: str) -> dict:
 
 class Phase25aPolicyFileLaneTests(unittest.TestCase):
     def test_policy_file_whitelist_loads_from_registry(self):
-        self.assertEqual(live_codex_policy_file_allowed_targets(), [POLICY_PATH])
+        self.assertEqual(live_codex_policy_file_allowed_targets(), [POLICY_PATH, PROJECT_REGISTRY_PATH])
 
     def test_preflight_passes_for_app_policies_py(self):
         self.assertEqual(_failed_check_names(_preflight_for([POLICY_PATH])), set())
+
+    def test_preflight_passes_for_project_registry_py(self):
+        self.assertEqual(_failed_check_names(_preflight_for([PROJECT_REGISTRY_PATH])), set())
 
     def test_preflight_rejects_other_app_files(self):
         for target in ("app/main.py", "app/router.py", "app/task_engine.py"):
@@ -118,6 +122,10 @@ class Phase25aPolicyFileLaneTests(unittest.TestCase):
 
     def test_content_hardening_allows_current_app_policies_py(self):
         checks = validate_live_codex_policy_file_content(Path("."), [POLICY_PATH])
+        self.assertEqual(_failed_check_names(checks), set())
+
+    def test_content_hardening_allows_current_project_registry_py(self):
+        checks = validate_live_codex_policy_file_content(Path("."), [PROJECT_REGISTRY_PATH])
         self.assertEqual(_failed_check_names(checks), set())
 
     def test_content_hardening_rejects_dangerous_import_call_and_missing_symbol(self):

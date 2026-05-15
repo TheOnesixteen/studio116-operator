@@ -86,6 +86,7 @@ live_codex_tests_only_disallowed_host_literals:
 
 live_codex_policy_file_allowed_targets:
   - app/policies.py
+  - app/project_registry.py
 
 live_codex_policy_file_disallowed_import_roots:
   - boto3
@@ -144,6 +145,7 @@ live_codex_policy_file_required_symbols:
 
 live_codex_model_file_allowed_targets:
   - app/models.py
+  - app/project_registry.py
 
 live_codex_model_file_disallowed_import_roots:
   - boto3

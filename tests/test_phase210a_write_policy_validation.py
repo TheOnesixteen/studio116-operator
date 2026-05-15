@@ -104,6 +104,20 @@ class Phase210aWritePolicyValidationTests(unittest.TestCase):
         self.assertIn("projects.redletters.write_policy.allowed_write_agents: unknown write agent 'n8n'", validation.errors)
         self.assertIn("projects.redletters.write_policy.allowed_write_agents: unknown write agent 'gemini'", validation.errors)
 
+    def test_gemini_cli_is_not_allowed_write_agent(self):
+        project = _valid_project()
+        project["allowed_agents"] = ["codex", "claude_code", "gemini_cli"]
+        project["write_policy"] = _writable_policy()
+        project["write_policy"]["allowed_write_agents"] = ["gemini_cli"]
+
+        validation = validate_projects({"redletters": project})
+
+        self.assertFalse(validation.ok)
+        self.assertIn(
+            "projects.redletters.write_policy.allowed_write_agents: unknown write agent 'gemini_cli'",
+            validation.errors,
+        )
+
     def test_allowed_write_agents_must_be_subset_of_allowed_agents(self):
         project = _valid_project()
         project["allowed_agents"] = ["claude_code"]
@@ -137,12 +151,14 @@ class Phase210aWritePolicyValidationTests(unittest.TestCase):
         self.assertFalse(validation.ok)
         self.assertIn("projects.redletters.write_policy.deployment_allowed: true is not allowed in Phase 2.10a", validation.errors)
 
-    def test_registry_redletters_has_explicit_non_writable_policy(self):
+    def test_registry_redletters_allows_gemini_review_without_write_authority(self):
         projects = load_projects()
 
         redletters = projects["redletters"]
 
-        self.assertEqual(redletters["write_policy"], _non_writable_policy())
+        self.assertEqual(redletters["allowed_agents"], ["codex", "claude_code", "gemini_cli"])
+        self.assertNotIn("gemini_cli", redletters["write_policy"]["allowed_write_agents"])
+        self.assertEqual(redletters["write_policy"]["allowed_lane"], "docs_only")
         self.assertTrue(validate_registry().ok)
 
     def test_projects_show_redletters_prints_write_policy(self):
@@ -153,8 +169,10 @@ class Phase210aWritePolicyValidationTests(unittest.TestCase):
         self.assertEqual(error, "")
         init_db.assert_not_called()
         self.assertIn("write_policy:", output)
-        self.assertIn("  writable: false", output)
-        self.assertIn("  allowed_write_agents: none", output)
+        self.assertIn("  writable: true", output)
+        self.assertIn("  allowed_write_agents: codex, claude_code", output)
+        self.assertNotIn("  allowed_write_agents: codex, claude_code, gemini_cli", output)
+        self.assertIn("  allowed_lane: docs_only", output)
         self.assertIn("  deployment_allowed: false", output)
 
     def test_validate_registry_reports_invalid_write_policy_file(self):

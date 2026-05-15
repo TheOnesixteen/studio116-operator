@@ -88,8 +88,8 @@ LIVE_CODEX_POLICY_FILE_ONLY_MODE = "live_codex_policy_file_only"
 LIVE_CODEX_MODEL_FILE_ONLY_MODE = "live_codex_model_file_only"
 LIVE_CODEX_DOCS_ONLY_TARGETS = ["README.md"]
 LIVE_CODEX_TESTS_ONLY_TARGETS = ["tests/test_*.py"]
-LIVE_CODEX_POLICY_FILE_ONLY_TARGETS = ["app/policies.py"]
-LIVE_CODEX_MODEL_FILE_ONLY_TARGETS = ["app/models.py"]
+LIVE_CODEX_POLICY_FILE_ONLY_TARGETS = ["app/policies.py", "app/project_registry.py"]
+LIVE_CODEX_MODEL_FILE_ONLY_TARGETS = ["app/models.py", "app/project_registry.py"]
 LIVE_CODEX_TIMEOUT_SECONDS = 600
 LIVE_CODEX_MAX_CHANGED_FILES = 5
 LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION = "live_codex_docs_only_allowed_targets"
@@ -334,8 +334,8 @@ def _validate_policy_allowed_targets(policies: dict[str, Any], errors: list[str]
     allowed_targets = {
         LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION: {"README.md", "OPERATOR.md", "AGENTS.md"},
         LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION: {"tests/test_*.py"},
-        LIVE_CODEX_POLICY_FILE_ALLOWED_TARGETS_SECTION: {"app/policies.py"},
-        LIVE_CODEX_MODEL_FILE_ALLOWED_TARGETS_SECTION: {"app/models.py"},
+        LIVE_CODEX_POLICY_FILE_ALLOWED_TARGETS_SECTION: {"app/policies.py", "app/project_registry.py"},
+        LIVE_CODEX_MODEL_FILE_ALLOWED_TARGETS_SECTION: {"app/models.py", "app/project_registry.py"},
     }
     for section, allowed_values in allowed_targets.items():
         values = policies.get(section)
@@ -596,12 +596,12 @@ def validate_live_codex_policy_file_paths(paths: list[str]) -> list[dict]:
         },
         {
             "name": "paths_are_policy_file_target",
-            "passed": paths == ["app/policies.py"],
+            "passed": paths == ["app/policies.py"] or paths == ["app/project_registry.py"],
             "details": {"paths": paths},
         },
         {
             "name": "paths_are_policy_file",
-            "passed": paths == ["app/policies.py"],
+            "passed": paths == ["app/policies.py"] or paths == ["app/project_registry.py"],
             "details": {"paths": paths},
         },
         {
@@ -642,7 +642,7 @@ def validate_live_codex_model_file_paths(paths: list[str]) -> list[dict]:
         },
         {
             "name": "paths_are_model_file_target",
-            "passed": paths == ["app/models.py"],
+            "passed": paths == ["app/models.py"] or paths == ["app/project_registry.py"],
             "details": {"paths": paths},
         },
         {
@@ -1203,6 +1203,7 @@ def validate_live_codex_tests_only_content(worktree_path: Path, changed_files: l
 
 
 def validate_live_codex_policy_file_content(worktree_path: Path, changed_files: list[str]) -> list[dict]:
+    required_symbols = set(live_codex_policy_file_required_symbols()) if changed_files == ["app/policies.py"] else None
     return _python_file_content_checks(
         worktree_path=worktree_path,
         changed_files=changed_files,
@@ -1210,11 +1211,15 @@ def validate_live_codex_policy_file_content(worktree_path: Path, changed_files: 
         check_prefix="policy_file_content",
         disallowed_import_roots=set(live_codex_policy_file_disallowed_import_roots()),
         disallowed_calls=set(live_codex_policy_file_disallowed_calls()),
-        required_symbols=set(live_codex_policy_file_required_symbols()),
+        required_symbols=required_symbols,
     )
 
 
 def validate_live_codex_model_file_content(worktree_path: Path, changed_files: list[str]) -> list[dict]:
+    required_symbols = set(live_codex_model_file_required_symbols()) if changed_files == ["app/models.py"] else None
+    required_frozen_dataclasses = (
+        set(live_codex_model_file_required_frozen_dataclasses()) if changed_files == ["app/models.py"] else None
+    )
     return _python_file_content_checks(
         worktree_path=worktree_path,
         changed_files=changed_files,
@@ -1222,8 +1227,8 @@ def validate_live_codex_model_file_content(worktree_path: Path, changed_files: l
         check_prefix="model_file_content",
         disallowed_import_roots=set(live_codex_model_file_disallowed_import_roots()),
         disallowed_calls=set(live_codex_model_file_disallowed_calls()),
-        required_symbols=set(live_codex_model_file_required_symbols()),
-        required_frozen_dataclasses=set(live_codex_model_file_required_frozen_dataclasses()),
+        required_symbols=required_symbols,
+        required_frozen_dataclasses=required_frozen_dataclasses,
     )
 
 

@@ -14,6 +14,40 @@ def _runtime(name: str) -> tuple[str, str]:
 
 
 class Phase24CliTests(unittest.TestCase):
+    def test_cli_accepts_gemini_cli_for_delegated_dry_run(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-phase24-cli-gemini")
+        argv = [
+            "task",
+            "create",
+            "--project",
+            "operator",
+            "--type",
+            "delegated",
+            "--title",
+            "Gemini review",
+            "--goal",
+            "Prepare a read-only Gemini review packet",
+            "--worker",
+            "gemini_cli",
+            "--delegation-mode",
+            "dry_run",
+        ]
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}), mock.patch(
+            "app.main.create_delegated_dry_run_task", return_value="task-123"
+        ) as create_dry_run_task, mock.patch("builtins.print") as print_mock:
+            exit_code = main(argv)
+
+        self.assertEqual(exit_code, 0)
+        create_dry_run_task.assert_called_once_with(
+            project="operator",
+            title="Gemini review",
+            goal="Prepare a read-only Gemini review packet",
+            worker="gemini_cli",
+            read_only=False,
+            requested_by="Rusty",
+        )
+        print_mock.assert_called_with("task-123")
+
     def test_cli_accepts_live_codex_tests_only_delegation_mode(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-phase24-cli")
         argv = [

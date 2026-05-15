@@ -182,7 +182,7 @@ projects:
       allowed_write_agents:
         - codex
         - claude_code
-      allowed_lane: docs/**
+      allowed_lane: docs_only
       max_changed_files: 3
       allow_file_creation: true
       requires_human_approval: true

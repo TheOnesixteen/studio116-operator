@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--goal", required=True)
     create.add_argument("--priority", default="medium")
     create.add_argument("--requested-by", default="Rusty")
-    create.add_argument("--worker", choices=("codex", "claude_code"))
+    create.add_argument("--worker", choices=("codex", "claude_code", "gemini_cli"))
     create.add_argument(
         "--delegation-mode",
         choices=(

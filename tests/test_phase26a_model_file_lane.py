@@ -18,6 +18,7 @@ from app.task_engine import approve_task, reject_task, show_task
 
 
 MODEL_PATH = "app/models.py"
+PROJECT_REGISTRY_PATH = "app/project_registry.py"
 MODEL_DIFF = (
     "diff --git a/app/models.py b/app/models.py\n"
     "--- a/app/models.py\n"
@@ -100,10 +101,13 @@ def _artifact_data(task_view: dict, artifact_type: str) -> dict:
 
 class Phase26aModelFileLaneTests(unittest.TestCase):
     def test_model_file_whitelist_loads_from_registry(self):
-        self.assertEqual(live_codex_model_file_allowed_targets(), [MODEL_PATH])
+        self.assertEqual(live_codex_model_file_allowed_targets(), [MODEL_PATH, PROJECT_REGISTRY_PATH])
 
     def test_preflight_passes_for_app_models_py(self):
         self.assertEqual(_failed_check_names(_preflight_for([MODEL_PATH])), set())
+
+    def test_preflight_passes_for_project_registry_py(self):
+        self.assertEqual(_failed_check_names(_preflight_for([PROJECT_REGISTRY_PATH])), set())
 
     def test_preflight_rejects_other_app_files(self):
         for target in ("app/main.py", "app/router.py", "app/task_engine.py", "app/scheduler.py", "app/db.py"):
@@ -118,6 +122,10 @@ class Phase26aModelFileLaneTests(unittest.TestCase):
 
     def test_content_hardening_allows_current_app_models_py(self):
         checks = validate_live_codex_model_file_content(Path("."), [MODEL_PATH])
+        self.assertEqual(_failed_check_names(checks), set())
+
+    def test_content_hardening_allows_current_project_registry_py(self):
+        checks = validate_live_codex_model_file_content(Path("."), [PROJECT_REGISTRY_PATH])
         self.assertEqual(_failed_check_names(checks), set())
 
     def test_content_hardening_rejects_dangerous_import_call_and_missing_symbol(self):

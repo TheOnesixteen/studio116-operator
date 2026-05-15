@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from adapters.base import worker_packet
-from adapters.claude_code import intended_read_only_command
+from adapters.claude_code import intended_read_only_command as intended_claude_read_only_command
 from adapters.codex import (
     intended_dry_run_command,
     live_docs_only_command,
@@ -20,6 +20,7 @@ from adapters.codex import (
     run_live_policy_file as run_codex_live_policy_file,
     run_live_tests_only,
 )
+from adapters.gemini_cli import intended_review_command as intended_gemini_review_command
 from app.artifact_store import write_json_artifact
 from app.artifact_store import write_text_artifact
 from app.config import get_settings
@@ -1073,11 +1074,11 @@ def run_delegated_dry_run(task: dict[str, Any], run_id: str) -> dict[str, Any]:
     delegation_mode = routing.get("delegation_mode", "dry_run")
     if delegation_mode != "dry_run":
         raise PermissionError("First Phase 2 slice supports delegated dry_run only")
-    if worker not in {"codex", "claude_code"}:
+    if worker not in {"codex", "claude_code", "gemini_cli"}:
         raise PermissionError(f"First Phase 2 slice does not support worker: {worker}")
 
     settings = get_settings()
-    read_only = worker == "claude_code" or bool(routing.get("read_only"))
+    read_only = worker in {"claude_code", "gemini_cli"} or bool(routing.get("read_only"))
     allowed_actions = ["inspect_files", "read_logs"]
     branch_name = None
     worktree_path = None
@@ -1119,8 +1120,10 @@ def run_delegated_dry_run(task: dict[str, Any], run_id: str) -> dict[str, Any]:
     )
     if worker == "codex":
         intended_command = intended_dry_run_command(packet_path=packet_path, worktree_path=worktree_path)
+    elif worker == "claude_code":
+        intended_command = intended_claude_read_only_command(packet_path=packet_path)
     else:
-        intended_command = intended_read_only_command(packet_path=packet_path)
+        intended_command = intended_gemini_review_command(packet_path=packet_path)
     record_intended_worker_command(
         run_id=run_id,
         worker_name=worker,

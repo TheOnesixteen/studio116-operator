@@ -52,7 +52,7 @@ def create_delegated_dry_run_task(
         routing={
             "worker": worker,
             "delegation_mode": "dry_run",
-            "read_only": read_only or worker == "claude_code",
+            "read_only": read_only or worker in {"claude_code", "gemini_cli"},
         },
         metadata={"phase": 2, "first_slice": True},
     )

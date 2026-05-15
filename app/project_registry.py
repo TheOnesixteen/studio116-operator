@@ -11,7 +11,7 @@ from app.config import get_settings
 from tools.git_tools import git_head, git_is_inside_work_tree, git_status_porcelain, git_top_level, slugify
 
 
-ALLOWED_AGENTS = {"codex", "claude_code", "n8n"}
+ALLOWED_AGENTS = {"codex", "claude_code", "gemini_cli", "n8n"}
 ALLOWED_WRITE_AGENTS = {"codex", "claude_code"}
 ALLOWED_WRITE_LANES = {"docs_only", "tests_only", "single_file_code", "multi_file_scoped"}
 DEPLOYMENT_METHODS = {"none", "manual", "siteground_sftp", "droplet_systemd", "docker_compose", "n8n_webhook"}

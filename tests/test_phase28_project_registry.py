@@ -50,6 +50,15 @@ class Phase28ProjectRegistryTests(unittest.TestCase):
         self.assertTrue(validation.ok)
         self.assertEqual(validation.errors, [])
 
+    def test_gemini_cli_is_valid_allowed_agent(self):
+        projects = _valid_projects()
+        projects["operator"]["allowed_agents"] = ["codex", "claude_code", "gemini_cli"]
+
+        validation = validate_projects(projects)
+
+        self.assertTrue(validation.ok)
+        self.assertEqual(validation.errors, [])
+
     def test_slug_must_match_project_key(self):
         projects = _valid_projects()
         projects["operator"]["slug"] = "wrong"
