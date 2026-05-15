@@ -158,7 +158,7 @@ class Phase210aWritePolicyValidationTests(unittest.TestCase):
 
         self.assertEqual(redletters["allowed_agents"], ["codex", "claude_code", "gemini_cli"])
         self.assertNotIn("gemini_cli", redletters["write_policy"]["allowed_write_agents"])
-        self.assertEqual(redletters["write_policy"]["allowed_lane"], "docs_only")
+        self.assertEqual(redletters["write_policy"]["allowed_lane"], ["docs_only", "scaffold_only"])
         self.assertTrue(validate_registry().ok)
 
     def test_projects_show_redletters_prints_write_policy(self):
@@ -172,7 +172,7 @@ class Phase210aWritePolicyValidationTests(unittest.TestCase):
         self.assertIn("  writable: true", output)
         self.assertIn("  allowed_write_agents: codex, claude_code", output)
         self.assertNotIn("  allowed_write_agents: codex, claude_code, gemini_cli", output)
-        self.assertIn("  allowed_lane: docs_only", output)
+        self.assertIn("  allowed_lane: docs_only, scaffold_only", output)
         self.assertIn("  deployment_allowed: false", output)
 
     def test_validate_registry_reports_invalid_write_policy_file(self):

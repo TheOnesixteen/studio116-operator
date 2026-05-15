@@ -14,10 +14,12 @@ from adapters.codex import (
     live_docs_only_command,
     live_model_file_command,
     live_policy_file_command,
+    live_scaffold_only_command,
     live_tests_only_command,
     run_live_docs_only,
     run_live_model_file as run_codex_live_model_file,
     run_live_policy_file as run_codex_live_policy_file,
+    run_live_scaffold_only,
     run_live_tests_only,
 )
 from adapters.gemini_cli import intended_review_command as intended_gemini_review_command
@@ -35,6 +37,8 @@ from app.policies import (
     LIVE_CODEX_MODEL_FILE_ONLY_TARGETS,
     LIVE_CODEX_POLICY_FILE_ONLY_MODE,
     LIVE_CODEX_POLICY_FILE_ONLY_TARGETS,
+    LIVE_CODEX_SCAFFOLD_ONLY_MODE,
+    LIVE_CODEX_SCAFFOLD_ONLY_TARGETS,
     LIVE_CODEX_TESTS_ONLY_MODE,
     LIVE_CODEX_TESTS_ONLY_TARGETS,
     LIVE_CODEX_TIMEOUT_SECONDS,
@@ -44,6 +48,7 @@ from app.policies import (
     live_codex_model_file_preflight_checks,
     live_codex_policy_file_preflight_checks,
     live_codex_preflight_checks,
+    live_codex_scaffold_only_preflight_checks,
     live_codex_tests_only_preflight_checks,
     validate_live_codex_paths_for_mode,
     validate_live_codex_changed_files_for_mode,
@@ -51,7 +56,7 @@ from app.policies import (
     validate_live_codex_policy_file_content,
     validate_live_codex_tests_only_content,
 )
-from app.project_registry import get_project
+from app.project_registry import get_project, preflight_project_write
 from app.state_manager import assert_transition, validate_status
 from tools.git_tools import (
     create_worktree,
@@ -525,6 +530,8 @@ def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> No
         default_targets = LIVE_CODEX_MODEL_FILE_ONLY_TARGETS
     elif mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
         default_targets = LIVE_CODEX_POLICY_FILE_ONLY_TARGETS
+    elif mode == LIVE_CODEX_SCAFFOLD_ONLY_MODE:
+        default_targets = LIVE_CODEX_SCAFFOLD_ONLY_TARGETS
     elif mode == LIVE_CODEX_TESTS_ONLY_MODE:
         default_targets = LIVE_CODEX_TESTS_ONLY_TARGETS
     else:
@@ -532,8 +539,7 @@ def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> No
     target_paths = routing.get("target_paths") or routing.get("targets") or default_targets
     if isinstance(target_paths, str):
         target_paths = [target_paths]
-    if task["project"] != "operator":
-        raise PermissionError("Phase 2.2 review loop is limited to project=operator")
+    canonical_repo_path_for_task(task)
     if task["type"] != "delegated":
         raise PermissionError("Phase 2.2 review loop is limited to delegated tasks")
     if routing.get("worker") != "codex":
@@ -543,9 +549,18 @@ def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> No
         LIVE_CODEX_TESTS_ONLY_MODE,
         LIVE_CODEX_POLICY_FILE_ONLY_MODE,
         LIVE_CODEX_MODEL_FILE_ONLY_MODE,
+        LIVE_CODEX_SCAFFOLD_ONLY_MODE,
     }:
         raise PermissionError("Phase 2.2 review loop is limited to approved live Codex modes")
-    if not all(check["passed"] for check in validate_live_codex_paths_for_mode(mode, target_paths)):
+    if not all(
+        check["passed"]
+        for check in validate_live_codex_paths_for_mode(
+            mode,
+            target_paths,
+            project=task["project"],
+            worker=routing.get("worker", "codex"),
+        )
+    ):
         raise PermissionError("Phase 2 review loop is limited to policy-whitelisted live Codex targets")
     if run["worker_name"] != "codex" or run["run_type"] != f"delegated_{mode}":
         raise PermissionError("Phase 2 review loop requires a matching live Codex run")
@@ -555,7 +570,7 @@ def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> No
 
 @contextmanager
 def _review_action_locks(task: dict[str, Any], run: dict[str, Any]) -> Iterator[None]:
-    settings = get_settings()
+    repo_path = canonical_repo_path_for_task(task)
     stack = ExitStack()
     try:
         stack.enter_context(
@@ -581,7 +596,7 @@ def _review_action_locks(task: dict[str, Any], run: dict[str, Any]) -> Iterator[
         stack.enter_context(
             managed_lock(
                 lock_type="repo",
-                resource_key=str(settings.repo_root),
+                resource_key=str(repo_path),
                 task_id=task["id"],
                 run_id=run["id"],
                 worker_name="scheduler",
@@ -611,6 +626,15 @@ def _worktree_path_for_review(run: dict[str, Any]) -> Path:
     return worktree_path
 
 
+def canonical_repo_path_for_task(task: dict[str, Any]) -> Path:
+    if task["project"] == "operator":
+        return get_settings().repo_root
+    try:
+        return Path(get_project(task["project"])["repo_path"])
+    except KeyError as exc:
+        raise PermissionError(f"Review loop requires a known project: {task['project']}") from exc
+
+
 def _changed_files_from_result(result) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
@@ -626,6 +650,8 @@ def _live_codex_mode_label_for_task(task: dict[str, Any]) -> str:
         return "model-file"
     if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
         return "policy-file"
+    if mode == LIVE_CODEX_SCAFFOLD_ONLY_MODE:
+        return "scaffold"
     if mode == LIVE_CODEX_TESTS_ONLY_MODE:
         return "tests-only"
     return "docs-only"
@@ -635,14 +661,28 @@ def _reviewed_diff_description(task: dict[str, Any]) -> str:
     return f"reviewed Codex {_live_codex_mode_label_for_task(task)} diff"
 
 
-def _phase22_changed_file_checks(changed_files: list[str], mode: str) -> tuple[list[dict], bool]:
-    checks = validate_live_codex_changed_files_for_mode(mode, changed_files)
+def _phase22_changed_file_checks(task: dict[str, Any], changed_files: list[str], mode: str) -> tuple[list[dict], bool]:
+    routing = _task_json(task, "routing_json", {})
+    checks = validate_live_codex_changed_files_for_mode(
+        mode,
+        changed_files,
+        project=task["project"],
+        worker=routing.get("worker", "codex"),
+    )
     passed = all(check["passed"] for check in checks)
     return checks, passed
 
 
-def _live_codex_content_checks(worktree_path: Path, changed_files: list[str], mode: str) -> list[dict]:
+def _live_codex_content_checks(
+    worktree_path: Path,
+    changed_files: list[str],
+    mode: str,
+    *,
+    project: str = "operator",
+) -> list[dict]:
     if mode == LIVE_CODEX_MODEL_FILE_ONLY_MODE:
+        if project != "operator":
+            return []
         return validate_live_codex_model_file_content(worktree_path, changed_files)
     if mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
         return validate_live_codex_policy_file_content(worktree_path, changed_files)
@@ -666,7 +706,7 @@ def _write_promotion_preflight(
 ) -> Path:
     preflight_checks = [
         {"name": "task_status_is_review", "passed": task["status"] == "review"},
-        {"name": "project_is_operator", "passed": task["project"] == "operator"},
+        {"name": "project_is_operator_or_known_writable", "passed": bool(canonical_repo_path_for_task(task))},
         {"name": "worker_is_codex", "passed": run["worker_name"] == "codex"},
         {
             "name": "mode_is_approved_live_codex_mode",
@@ -676,6 +716,7 @@ def _write_promotion_preflight(
                 f"delegated_{LIVE_CODEX_TESTS_ONLY_MODE}",
                 f"delegated_{LIVE_CODEX_POLICY_FILE_ONLY_MODE}",
                 f"delegated_{LIVE_CODEX_MODEL_FILE_ONLY_MODE}",
+                f"delegated_{LIVE_CODEX_SCAFFOLD_ONLY_MODE}",
             },
         },
         {"name": "worktree_under_runtime_worktrees", "passed": True},
@@ -706,9 +747,19 @@ def _write_promotion_preflight(
             "passed": passed,
             "changed_files": changed_files,
             "checks": preflight_checks,
-            "allowed_targets": live_codex_allowed_targets_for_mode(_live_codex_mode_for_task(task)),
+            "allowed_targets": (
+                live_codex_docs_only_allowed_targets_for_project(
+                    task["project"],
+                    _task_json(task, "routing_json", {}).get("worker", "codex"),
+                )
+                if _live_codex_mode_for_task(task) == LIVE_CODEX_DOCS_ONLY_MODE
+                else LIVE_CODEX_SCAFFOLD_ONLY_TARGETS
+                if _live_codex_mode_for_task(task) == LIVE_CODEX_MODEL_FILE_ONLY_MODE
+                and task["project"] != "operator"
+                else live_codex_allowed_targets_for_mode(_live_codex_mode_for_task(task))
+            ),
             "worktree_path": str(worktree_path),
-            "canonical_repo_path": str(get_settings().repo_root),
+            "canonical_repo_path": str(canonical_repo_path_for_task(task)),
             "stale_patch_recovery": stale_patch_recovery,
         },
     )
@@ -716,7 +767,7 @@ def _write_promotion_preflight(
 
 def _live_codex_stale_patch_recovery(
     *,
-    settings,
+    canonical_repo_path: Path,
     run: dict[str, Any],
     worktree_path: Path,
     changed_files: list[str],
@@ -724,13 +775,13 @@ def _live_codex_stale_patch_recovery(
 ) -> dict[str, Any]:
     review_head_result = git_head(worktree_path=worktree_path)
     record_worker_execution(run["id"], "shell_ops", review_head_result)
-    canonical_head_result = git_head(worktree_path=settings.repo_root)
+    canonical_head_result = git_head(worktree_path=canonical_repo_path)
     record_worker_execution(run["id"], "shell_ops", canonical_head_result)
 
     canonical_target_diff_result = None
     if review_head_result.exit_code == 0 and changed_files:
         canonical_target_diff_result = git_diff_against_ref(
-            repo_path=settings.repo_root,
+            repo_path=canonical_repo_path,
             base_ref=review_head_result.stdout.strip(),
             target_paths=changed_files,
         )
@@ -778,8 +829,8 @@ def _live_codex_stale_patch_recovery(
 
 
 def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
-    settings = get_settings()
     worktree_path = _worktree_path_for_review(run)
+    canonical_repo_path = canonical_repo_path_for_task(task)
     diff_result = git_diff(worktree_path=worktree_path)
     record_worker_execution(run["id"], "shell_ops", diff_result)
     changed_result = git_changed_files(worktree_path=worktree_path)
@@ -787,8 +838,14 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     changed_files = _changed_files_from_result(changed_result)
     mode = _live_codex_mode_for_task(task)
     mode_label = _live_codex_mode_label_for_task(task)
-    checks, changed_files_passed = _phase22_changed_file_checks(changed_files, mode)
-    content_checks = _live_codex_content_checks(worktree_path, changed_files, mode)
+    stale_recovery_modes = {
+        LIVE_CODEX_TESTS_ONLY_MODE,
+        LIVE_CODEX_POLICY_FILE_ONLY_MODE,
+        LIVE_CODEX_MODEL_FILE_ONLY_MODE,
+        LIVE_CODEX_SCAFFOLD_ONLY_MODE,
+    }
+    checks, changed_files_passed = _phase22_changed_file_checks(task, changed_files, mode)
+    content_checks = _live_codex_content_checks(worktree_path, changed_files, mode, project=task["project"])
     checks = [*checks, *content_checks]
     content_checks_passed = all(check["passed"] for check in content_checks)
     if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files_passed or not content_checks_passed:
@@ -832,7 +889,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
         filename="rollback_patch.patch",
         content=rollback_result.stdout,
     )
-    apply_check_result = git_apply_check(repo_path=settings.repo_root, patch_path=approved_patch_path)
+    apply_check_result = git_apply_check(repo_path=canonical_repo_path, patch_path=approved_patch_path)
     record_worker_execution(run["id"], "shell_ops", apply_check_result)
     if apply_check_result.exit_code != 0:
         recommended_next_action = (
@@ -841,13 +898,13 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
         )
         stale_patch_recovery = (
             _live_codex_stale_patch_recovery(
-                settings=settings,
+                canonical_repo_path=canonical_repo_path,
                 run=run,
                 worktree_path=worktree_path,
                 changed_files=changed_files,
                 apply_check_result=apply_check_result,
             )
-            if mode in {LIVE_CODEX_TESTS_ONLY_MODE, LIVE_CODEX_POLICY_FILE_ONLY_MODE, LIVE_CODEX_MODEL_FILE_ONLY_MODE}
+            if mode in stale_recovery_modes
             else None
         )
         preflight_path = _write_promotion_preflight(
@@ -863,7 +920,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
                 f"Task remains in review; no force apply, auto-merge, or canonical overwrite was attempted."
             ),
             recommended_next_action=recommended_next_action
-            if mode in {LIVE_CODEX_TESTS_ONLY_MODE, LIVE_CODEX_POLICY_FILE_ONLY_MODE, LIVE_CODEX_MODEL_FILE_ONLY_MODE}
+            if mode in stale_recovery_modes
             else None,
             stale_patch_recovery=stale_patch_recovery,
         )
@@ -879,9 +936,9 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
         passed=True,
         summary="Live Codex promotion preflight passed",
     )
-    canonical_head_before = git_head(worktree_path=settings.repo_root)
+    canonical_head_before = git_head(worktree_path=canonical_repo_path)
     record_worker_execution(run["id"], "shell_ops", canonical_head_before)
-    apply_result = git_apply_patch(repo_path=settings.repo_root, patch_path=approved_patch_path)
+    apply_result = git_apply_patch(repo_path=canonical_repo_path, patch_path=approved_patch_path)
     record_worker_execution(run["id"], "shell_ops", apply_result)
     if apply_result.exit_code != 0:
         write_json_artifact(
@@ -894,7 +951,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
                 "summary": f"Approved {mode_label} patch apply failed after a successful apply check; task remains in review",
                 "promoted": False,
                 "changed_files": changed_files,
-                "canonical_repo_path": str(settings.repo_root),
+                "canonical_repo_path": str(canonical_repo_path),
                 "worktree_path": str(worktree_path),
                 "branch_name": run["branch_name"],
                 "promotion_preflight_path": str(promotion_preflight_path),
@@ -913,7 +970,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             },
         )
         raise RuntimeError("Approved patch apply failed after a successful apply check; task remains in review")
-    canonical_head_after = git_head(worktree_path=settings.repo_root)
+    canonical_head_after = git_head(worktree_path=canonical_repo_path)
     record_worker_execution(run["id"], "shell_ops", canonical_head_after)
     promotion_summary_path = write_json_artifact(
         task_id=task["id"],
@@ -925,7 +982,7 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
             "summary": f"Approved {mode_label} diff promoted to the canonical working tree without commit, merge, or push",
             "promoted": True,
             "changed_files": changed_files,
-            "canonical_repo_path": str(settings.repo_root),
+            "canonical_repo_path": str(canonical_repo_path),
             "worktree_path": str(worktree_path),
             "branch_name": run["branch_name"],
             "promotion_preflight_path": str(promotion_preflight_path),
@@ -963,7 +1020,7 @@ def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
     changed_files = _changed_files_from_result(changed_result)
     mode = _live_codex_mode_for_task(task)
     mode_label = _live_codex_mode_label_for_task(task)
-    checks, changed_files_passed = _phase22_changed_file_checks(changed_files, mode)
+    checks, changed_files_passed = _phase22_changed_file_checks(task, changed_files, mode)
     rejected_patch_path = write_text_artifact(
         task_id=task["id"],
         run_id=run["id"],
@@ -1203,6 +1260,10 @@ def run_live_codex_model_file(task: dict[str, Any], run_id: str) -> dict[str, An
     return _run_live_codex_policy_task(task, run_id, mode=LIVE_CODEX_MODEL_FILE_ONLY_MODE)
 
 
+def run_live_codex_scaffold_only(task: dict[str, Any], run_id: str) -> dict[str, Any]:
+    return _run_live_codex_policy_task(task, run_id, mode=LIVE_CODEX_SCAFFOLD_ONLY_MODE)
+
+
 def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str) -> dict[str, Any]:
     routing = _task_json(task, "routing_json", {})
     constraints = _task_json(task, "constraints_json", [])
@@ -1210,6 +1271,8 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
     delegation_mode = routing.get("delegation_mode")
     if mode == LIVE_CODEX_MODEL_FILE_ONLY_MODE:
         default_targets = LIVE_CODEX_MODEL_FILE_ONLY_TARGETS
+    elif mode == LIVE_CODEX_SCAFFOLD_ONLY_MODE:
+        default_targets = LIVE_CODEX_SCAFFOLD_ONLY_TARGETS
     elif mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
         default_targets = LIVE_CODEX_POLICY_FILE_ONLY_TARGETS
     elif mode == LIVE_CODEX_TESTS_ONLY_MODE:
@@ -1222,12 +1285,18 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
 
     settings = get_settings()
     repo_path = settings.repo_root
-    if mode == LIVE_CODEX_DOCS_ONLY_MODE and task["project"] != "operator":
+    external_repo_modes = {
+        LIVE_CODEX_DOCS_ONLY_MODE,
+        LIVE_CODEX_MODEL_FILE_ONLY_MODE,
+        LIVE_CODEX_SCAFFOLD_ONLY_MODE,
+    }
+    use_external_repo = task["project"] != "operator" and mode in external_repo_modes
+    if use_external_repo:
         try:
             repo_path = Path(get_project(task["project"])["repo_path"])
         except KeyError:
             repo_path = settings.repo_root
-    if mode == LIVE_CODEX_DOCS_ONLY_MODE and task["project"] != "operator":
+    if use_external_repo:
         branch_name = (
             f"operator-external-{slugify(task['project'])}-{task['id'].split('-')[0]}-"
             f"codex-{slugify(task['title'])}"
@@ -1248,7 +1317,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
             worker=worker,
             mode=delegation_mode,
             target_paths=target_paths,
-            repo_root=settings.repo_root,
+            repo_root=repo_path,
             worktree_path=worktree_path,
             command_cwd=worktree_path,
             active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
@@ -1257,6 +1326,22 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
             worktree_ready=worktree_ready,
         )
         mode_label = "model-file"
+    elif mode == LIVE_CODEX_SCAFFOLD_ONLY_MODE:
+        intended_command = live_scaffold_only_command(worktree_path=worktree_path, packet_path=packet_path)
+        preflight_checks = live_codex_scaffold_only_preflight_checks(
+            project=task["project"],
+            worker=worker,
+            mode=delegation_mode,
+            target_paths=target_paths,
+            repo_root=repo_path,
+            worktree_path=worktree_path,
+            command_cwd=worktree_path,
+            active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
+            goal=task["goal"],
+            constraints=constraints,
+            worktree_ready=worktree_ready,
+        )
+        mode_label = "scaffold"
     elif mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
         intended_command = live_policy_file_command(worktree_path=worktree_path, packet_path=packet_path)
         preflight_checks = live_codex_policy_file_preflight_checks(
@@ -1309,6 +1394,8 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
     allowed_targets = (
         live_codex_docs_only_allowed_targets_for_project(task["project"], worker or "")
         if mode == LIVE_CODEX_DOCS_ONLY_MODE
+        else LIVE_CODEX_SCAFFOLD_ONLY_TARGETS
+        if mode == LIVE_CODEX_MODEL_FILE_ONLY_MODE and task["project"] != "operator"
         else live_codex_allowed_targets_for_mode(mode)
     )
     write_json_artifact(
@@ -1372,6 +1459,12 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
 
     if mode == LIVE_CODEX_MODEL_FILE_ONLY_MODE:
         codex_result = run_codex_live_model_file(
+            worktree_path=worktree_path,
+            packet_path=packet_path,
+            timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
+        )
+    elif mode == LIVE_CODEX_SCAFFOLD_ONLY_MODE:
+        codex_result = run_live_scaffold_only(
             worktree_path=worktree_path,
             packet_path=packet_path,
             timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
@@ -1445,7 +1538,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
             "details": {"changed_files": changed_files},
         }
     )
-    post_run_checks.extend(_live_codex_content_checks(worktree_path, changed_files, mode))
+    post_run_checks.extend(_live_codex_content_checks(worktree_path, changed_files, mode, project=task["project"]))
     if mode == LIVE_CODEX_DOCS_ONLY_MODE:
         project_max_changed_files = live_codex_docs_only_project_max_changed_files(task["project"], worker or "")
         post_run_checks.append(
@@ -1455,6 +1548,17 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
                 "details": {"count": len(changed_files), "max": project_max_changed_files},
             }
         )
+    elif mode == LIVE_CODEX_SCAFFOLD_ONLY_MODE and task["project"] != "operator":
+        project_write = preflight_project_write(task["project"], worker=worker or "", lane="scaffold_only")
+        project_max_changed_files = project_write.write_policy.get("max_changed_files")
+        if isinstance(project_max_changed_files, int):
+            post_run_checks.append(
+                {
+                    "name": "changed_file_count_within_project_write_policy_max",
+                    "passed": len(changed_files) <= project_max_changed_files,
+                    "details": {"count": len(changed_files), "max": project_max_changed_files},
+                }
+            )
     post_run_checks.append(
         {
             "name": "no_auto_commit_or_merge",

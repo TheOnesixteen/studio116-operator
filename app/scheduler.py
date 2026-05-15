@@ -14,6 +14,7 @@ from app.task_engine import (
     run_live_codex_docs_only,
     run_live_codex_model_file,
     run_live_codex_policy_file,
+    run_live_codex_scaffold_only,
     run_live_codex_tests_only,
     run_health_check,
     transition_task,
@@ -55,6 +56,8 @@ def run_next(task_id: str | None = None) -> dict:
                         health_result = run_live_codex_policy_file(task, run_id)
                     elif delegation_mode == "live_codex_model_file_only":
                         health_result = run_live_codex_model_file(task, run_id)
+                    elif delegation_mode == "live_codex_scaffold_only":
+                        health_result = run_live_codex_scaffold_only(task, run_id)
                     else:
                         health_result = run_delegated_dry_run(task, run_id)
             else:

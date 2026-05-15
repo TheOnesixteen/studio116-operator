@@ -13,7 +13,7 @@ from tools.git_tools import git_head, git_is_inside_work_tree, git_status_porcel
 
 ALLOWED_AGENTS = {"codex", "claude_code", "gemini_cli", "n8n"}
 ALLOWED_WRITE_AGENTS = {"codex", "claude_code"}
-ALLOWED_WRITE_LANES = {"docs_only", "tests_only", "single_file_code", "multi_file_scoped"}
+ALLOWED_WRITE_LANES = {"docs_only", "tests_only", "single_file_code", "multi_file_scoped", "scaffold_only"}
 DEPLOYMENT_METHODS = {"none", "manual", "siteground_sftp", "droplet_systemd", "docker_compose", "n8n_webhook"}
 PROJECT_STATUSES = {"active", "paused", "planned", "archived"}
 REQUIRED_WRITE_POLICY_FIELDS = {
@@ -217,12 +217,13 @@ def preflight_project_write(
         write_policy.get("allowed_write_agents") if isinstance(write_policy.get("allowed_write_agents"), list) else []
     )
     allowed_lane = write_policy.get("allowed_lane")
+    allowed_lanes = allowed_lane if isinstance(allowed_lane, list) else [allowed_lane]
 
     if worker not in allowed_agents:
         reasons.append(f"Requested worker {worker} is not in project allowed_agents.")
     if worker not in allowed_write_agents:
         reasons.append(f"Requested worker {worker} is not in write_policy.allowed_write_agents.")
-    if lane != allowed_lane:
+    if lane not in allowed_lanes:
         reasons.append(f"Requested lane {lane} does not match write_policy.allowed_lane {_format_policy_value(allowed_lane)}.")
     if write_policy.get("deployment_allowed") is True:
         reasons.append("write_policy.deployment_allowed is true, but Phase 2.10b never performs deployment.")
@@ -643,6 +644,20 @@ def _validate_allowed_lane(write_policy: dict[str, Any], policy_prefix: str, err
         return
     value = write_policy.get("allowed_lane")
     if value is None:
+        return
+    if isinstance(value, list):
+        if not value:
+            errors.append(f"{policy_prefix}.allowed_lane: must not be empty")
+            return
+        for lane in value:
+            if not isinstance(lane, str):
+                errors.append(f"{policy_prefix}.allowed_lane: entries must be strings")
+                continue
+            if lane not in ALLOWED_WRITE_LANES:
+                errors.append(f"{policy_prefix}.allowed_lane: unknown lane {lane!r}")
+        return
+    if not isinstance(value, str):
+        errors.append(f"{policy_prefix}.allowed_lane: must be null, a string, or a list of strings")
         return
     if value not in ALLOWED_WRITE_LANES:
         errors.append(f"{policy_prefix}.allowed_lane: unknown lane {value!r}")

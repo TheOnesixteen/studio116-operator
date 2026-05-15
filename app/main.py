@@ -24,6 +24,7 @@ from app.router import (
     create_live_codex_docs_only_task,
     create_live_codex_model_file_task,
     create_live_codex_policy_file_task,
+    create_live_codex_scaffold_only_task,
     create_live_codex_tests_only_task,
 )
 from app.scheduler import run_next
@@ -54,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
             "live_codex_tests_only",
             "live_codex_policy_file_only",
             "live_codex_model_file_only",
+            "live_codex_scaffold_only",
         ),
         default="dry_run",
     )
@@ -379,6 +381,8 @@ def _format_bool(value: object) -> str:
 def _format_nullable(value: object) -> str:
     if value is None:
         return "null"
+    if isinstance(value, list):
+        return _format_project_list([str(item) for item in value])
     return str(value)
 
 
@@ -489,6 +493,16 @@ def main(argv: list[str] | None = None) -> int:
                     if args.worker != "codex":
                         raise ValueError("live_codex_model_file_only requires --worker codex")
                     task_id = create_live_codex_model_file_task(
+                        project=args.project,
+                        title=args.title,
+                        goal=args.goal,
+                        target_paths=args.target_paths,
+                        requested_by=args.requested_by,
+                    )
+                elif args.delegation_mode == "live_codex_scaffold_only":
+                    if args.worker != "codex":
+                        raise ValueError("live_codex_scaffold_only requires --worker codex")
+                    task_id = create_live_codex_scaffold_only_task(
                         project=args.project,
                         title=args.title,
                         goal=args.goal,

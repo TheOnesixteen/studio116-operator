@@ -269,3 +269,58 @@ def create_live_codex_model_file_task(
         },
         metadata={"phase": "2.6a", "live_codex_model_file_whitelist": True, "model_file_content_hardening": True},
     )
+
+
+def create_live_codex_scaffold_only_task(
+    *,
+    project: str,
+    title: str,
+    goal: str,
+    target_paths: list[str] | None = None,
+    requested_by: str = "Rusty",
+) -> str:
+    target_paths = target_paths or ["app/__init__.py"]
+    return create_task(
+        project=project,
+        task_type="delegated",
+        title=title,
+        goal=goal,
+        requested_by=requested_by,
+        constraints=[
+            "Phase 2.10e live Codex external scaffold-only slice",
+            f"Target policy-whitelisted scaffold path(s) only: {', '.join(target_paths)}",
+            "One writable live Codex task at a time",
+            "Use isolated worktree only",
+            "Canonical checkout must remain untouched until review approval",
+            "Timeout after 10 minutes",
+            "No app code changes outside approved scaffold paths",
+            "No app/ai_generation.py changes",
+            "No email sender changes",
+            "No infrastructure changes",
+            "No runtime config changes",
+            "No publishing job changes",
+            "No deployment",
+            "No service restarts",
+            "No secret reads",
+            "No package installs",
+            "No network-dependent work",
+            "No auto-commit",
+            "No auto-merge",
+            "No auto-push",
+            "No worktree cleanup automation",
+        ],
+        acceptance_criteria=[
+            "Write preflight_result.json before launching Codex",
+            "Launch Codex only if all required preflight checks pass",
+            "Write worker_packet.json, worker_result.json, git_diff.patch, changed_files.json, and review_summary.json",
+            "Stop in review after successful Codex execution",
+            "Require Rusty approval before any follow-on action",
+        ],
+        routing={
+            "worker": "codex",
+            "delegation_mode": "live_codex_scaffold_only",
+            "read_only": False,
+            "target_paths": target_paths,
+        },
+        metadata={"phase": "2.10e", "live_codex_external_scaffold_whitelist": True},
+    )
