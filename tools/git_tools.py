@@ -73,9 +73,43 @@ def git_status_porcelain(*, repo_path: Path) -> CommandResult:
 def git_diff(*, worktree_path: Path) -> CommandResult:
     command = ["git", "-C", str(worktree_path), "diff", "--no-ext-diff"]
     completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    if completed.returncode != 0:
+        return CommandResult(
+            command=" ".join(command),
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            exit_code=completed.returncode,
+        )
+    untracked_command = ["git", "-C", str(worktree_path), "ls-files", "--others", "--exclude-standard"]
+    untracked = subprocess.run(untracked_command, capture_output=True, text=True, check=False, timeout=30)
+    if untracked.returncode != 0:
+        return CommandResult(
+            command=" ".join([*command, "&&", *untracked_command]),
+            stdout=completed.stdout,
+            stderr=untracked.stderr,
+            exit_code=untracked.returncode,
+        )
+    diff_parts = [completed.stdout]
+    for path in [line.strip() for line in untracked.stdout.splitlines() if line.strip()]:
+        untracked_diff_command = ["git", "-C", str(worktree_path), "diff", "--no-index", "--", "/dev/null", path]
+        untracked_diff = subprocess.run(
+            untracked_diff_command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if untracked_diff.returncode not in {0, 1}:
+            return CommandResult(
+                command=" ".join([*command, "&&", *untracked_command, "&&", *untracked_diff_command]),
+                stdout="".join(diff_parts),
+                stderr=untracked_diff.stderr,
+                exit_code=untracked_diff.returncode,
+            )
+        diff_parts.append(untracked_diff.stdout)
     return CommandResult(
-        command=" ".join(command),
-        stdout=completed.stdout,
+        command=" ".join([*command, "&&", *untracked_command]),
+        stdout="".join(diff_parts),
         stderr=completed.stderr,
         exit_code=completed.returncode,
     )
@@ -95,9 +129,30 @@ def git_diff_against_ref(*, repo_path: Path, base_ref: str, target_paths: list[s
 def git_changed_files(*, worktree_path: Path) -> CommandResult:
     command = ["git", "-C", str(worktree_path), "diff", "--name-only"]
     completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    if completed.returncode != 0:
+        return CommandResult(
+            command=" ".join(command),
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            exit_code=completed.returncode,
+        )
+    untracked_command = ["git", "-C", str(worktree_path), "ls-files", "--others", "--exclude-standard"]
+    untracked = subprocess.run(untracked_command, capture_output=True, text=True, check=False, timeout=30)
+    if untracked.returncode != 0:
+        return CommandResult(
+            command=" ".join([*command, "&&", *untracked_command]),
+            stdout=completed.stdout,
+            stderr=untracked.stderr,
+            exit_code=untracked.returncode,
+        )
+    changed_files = {
+        line.strip()
+        for line in [*completed.stdout.splitlines(), *untracked.stdout.splitlines()]
+        if line.strip()
+    }
     return CommandResult(
-        command=" ".join(command),
-        stdout=completed.stdout,
+        command=" ".join([*command, "&&", *untracked_command]),
+        stdout="".join(f"{path}\n" for path in sorted(changed_files)),
         stderr=completed.stderr,
         exit_code=completed.returncode,
     )

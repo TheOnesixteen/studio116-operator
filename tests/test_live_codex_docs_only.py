@@ -99,6 +99,9 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         self.assertIn("changed_files", artifact_types)
         self.assertIn("review_summary", artifact_types)
         self.assertIn("/worktrees/", run["worktree_path"])
+        worker_packet = _artifact_data(task_view, "worker_packet")
+        self.assertEqual(worker_packet["target_paths"], ["README.md"])
+        self.assertEqual(worker_packet["allowed_targets"], ["AGENTS.md", "OPERATOR.md", "README.md"])
         self.assertTrue(_check(preflight_data, "project_is_operator_or_known_writable")["passed"])
         self.assertTrue(_check(preflight_data, "repo_root_is_operator_or_project_repo")["passed"])
         codex_run.assert_called_once()
@@ -151,6 +154,7 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         self.assertTrue(_check(preflight_data, "external_project_deployment_not_allowed")["passed"])
         self.assertEqual(_check(preflight_data, "external_project_write_preflight_authorized")["details"]["deployment_allowed"], False)
         self.assertEqual(str(create_worktree.call_args.kwargs["repo_path"]), "/root/Projects/redletters.tellthem.ai")
+        self.assertTrue(create_worktree.call_args.kwargs["branch_name"].startswith("operator-external-redletters-"))
         codex_run.assert_called_once()
 
     def test_redletters_mission_001_docs_targets_pass_preflight_and_post_run(self):
@@ -264,6 +268,66 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         artifact_types = {artifact["artifact_type"] for artifact in task_view["artifacts"]}
         self.assertIn("preflight_result", artifact_types)
         self.assertIn("worker_result", artifact_types)
+        self.assertNotEqual(task_view["task"]["status"], "running")
+
+    def test_no_change_codex_result_fails_clearly_and_writes_post_run_artifacts(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-no-change")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
+                "app.task_engine.run_live_docs_only", return_value=CommandResult("codex exec", "ok", "", 0)
+            ), mock.patch("app.task_engine.git_diff", return_value=CommandResult("git diff", "", "", 0)), mock.patch(
+                "app.task_engine.git_changed_files", return_value=CommandResult("git diff --name-only", "", "", 0)
+            ), mock.patch(
+                "app.task_engine.git_head", return_value=CommandResult("git rev-parse HEAD", "abc123\n", "", 0)
+            ):
+                task_id = create_live_codex_docs_only_task(
+                    project="redletters",
+                    title="RedLetters no-change docs task",
+                    goal="Create docs but Codex returns no diff",
+                    target_paths=MISSION_001_TARGETS,
+                )
+                result = run_next(task_id)
+            task_view = show_task(task_id)
+            changed_data = _artifact_data(task_view, "changed_files")
+            review_summary = _artifact_data(task_view, "review_summary")
+
+        artifact_types = {artifact["artifact_type"] for artifact in task_view["artifacts"]}
+        self.assertFalse(result["task_succeeded"])
+        self.assertEqual(result["summary"], "Live Codex docs-only execution produced no changes")
+        self.assertEqual(task_view["task"]["status"], "failed")
+        self.assertNotEqual(task_view["task"]["status"], "running")
+        self.assertIn("worker_result", artifact_types)
+        self.assertIn("git_diff", artifact_types)
+        self.assertIn("changed_files", artifact_types)
+        self.assertIn("review_summary", artifact_types)
+        self.assertFalse(changed_data["passed"])
+        self.assertIn("codex_produced_no_changes", result["key_findings"])
+        self.assertEqual(review_summary["task_stops_in"], "failed")
+        self.assertTrue(any(check["name"] == "codex_produced_changes" and not check["passed"] for check in changed_data["checks"]))
+
+    def test_codex_failure_does_not_leave_task_running_and_records_worker_result(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-failure")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
+                "app.task_engine.run_live_docs_only", return_value=CommandResult("codex exec", "", "model error", 1)
+            ):
+                task_id = create_live_codex_docs_only_task(
+                    project="redletters",
+                    title="RedLetters failing docs task",
+                    goal="Create docs but Codex fails",
+                    target_paths=MISSION_001_TARGETS,
+                )
+                result = run_next(task_id)
+            task_view = show_task(task_id)
+            worker_result = _artifact_data(task_view, "worker_result")
+
+        self.assertFalse(result["task_succeeded"])
+        self.assertEqual(task_view["task"]["status"], "failed")
+        self.assertNotEqual(task_view["task"]["status"], "running")
+        self.assertEqual(worker_result["exit_code"], 1)
+        self.assertEqual(worker_result["stderr"], "model error")
 
     def test_changed_files_validation_enforces_readme_only_post_run(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-changed-files")

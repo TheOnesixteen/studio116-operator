@@ -65,6 +65,7 @@ from tools.git_tools import (
     git_head,
     git_restore_path,
     git_reverse_diff,
+    slugify,
 )
 from tools.caddy_tools import inspect_caddy
 from tools.docker_tools import inspect_docker_health
@@ -1226,7 +1227,13 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
             repo_path = Path(get_project(task["project"])["repo_path"])
         except KeyError:
             repo_path = settings.repo_root
-    branch_name = delegated_branch_name(task_id=task["id"], worker="codex", title=task["title"])
+    if mode == LIVE_CODEX_DOCS_ONLY_MODE and task["project"] != "operator":
+        branch_name = (
+            f"operator-external-{slugify(task['project'])}-{task['id'].split('-')[0]}-"
+            f"codex-{slugify(task['title'])}"
+        )
+    else:
+        branch_name = delegated_branch_name(task_id=task["id"], worker="codex", title=task["title"])
     worktree_path = delegated_worktree_path(task_id=task["id"], worker="codex")
     worktree_result = create_worktree(repo_path=repo_path, worktree_path=worktree_path, branch_name=branch_name)
     record_worker_execution(run_id, "shell_ops", worktree_result)
@@ -1424,11 +1431,19 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
     current_head_result = git_head(worktree_path=worktree_path)
     record_worker_execution(run_id, "shell_ops", current_head_result)
     changed_files = [line.strip() for line in changed_result.stdout.splitlines() if line.strip()]
+    no_changes_produced = not changed_files
     post_run_checks = validate_live_codex_changed_files_for_mode(
         mode,
         changed_files,
         project=task["project"],
         worker=worker or "",
+    )
+    post_run_checks.append(
+        {
+            "name": "codex_produced_changes",
+            "passed": not no_changes_produced,
+            "details": {"changed_files": changed_files},
+        }
     )
     post_run_checks.extend(_live_codex_content_checks(worktree_path, changed_files, mode))
     if mode == LIVE_CODEX_DOCS_ONLY_MODE:
@@ -1502,6 +1517,13 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
         filename="review_summary.json",
         data=review_summary,
     )
+    if no_changes_produced:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": f"Live Codex {mode_label} execution produced no changes",
+            "key_findings": ["codex_produced_no_changes"],
+        }
     if not post_run_passed:
         return {
             "overall_status": "failed",
