@@ -111,19 +111,20 @@ class Phase210bExternalWritePreflightTests(unittest.TestCase):
         self.assertTrue(result.authorized)
         self.assertIn("Policy allows this worker/lane combination.", result.reasons)
 
-    def test_redletters_cli_is_blocked_and_actionable(self):
+    def test_redletters_cli_authorized_for_docs_only_without_deployment(self):
         with mock.patch("app.main.init_db") as init_db:
             exit_code, output, error = _run_cli(["projects", "preflight-write", "redletters", "--lane", "docs_only", "--worker", "codex"])
 
-        self.assertEqual(exit_code, 1)
+        self.assertEqual(exit_code, 0)
         self.assertEqual(error, "")
         init_db.assert_not_called()
-        self.assertIn("External write preflight: blocked", output)
+        self.assertIn("External write preflight: authorized", output)
         self.assertIn("Project: Red Letters (redletters)", output)
-        self.assertIn("Result: known_non_writable", output)
-        self.assertIn("write_policy.writable is false.", output)
+        self.assertIn("Result: writable_lane_authorized", output)
+        self.assertIn("- deployment_allowed: false", output)
+        self.assertIn("Policy allows this worker/lane combination.", output)
         self.assertIn("Next:", output)
-        self.assertIn("This command did not create a worktree, launch Codex, promote patches, or deploy.", output)
+        self.assertIn("No worktree, worker launch, promotion, or deployment occurred.", output)
 
     def test_operator_cli_authorized_for_docs_only_sanity_check(self):
         with mock.patch("app.main.init_db") as init_db:

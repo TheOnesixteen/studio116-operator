@@ -29,6 +29,15 @@ def _success_mocks():
     )
 
 
+def _artifact_data(task_view: dict, artifact_type: str) -> dict:
+    artifact = next(artifact for artifact in task_view["artifacts"] if artifact["artifact_type"] == artifact_type)
+    return json.loads(Path(artifact["path"]).read_text(encoding="utf-8"))
+
+
+def _check(preflight_data: dict, name: str) -> dict:
+    return next(check for check in preflight_data["checks"] if check["name"] == name)
+
+
 class LiveCodexDocsOnlyTests(unittest.TestCase):
     def test_live_codex_success_stops_in_review_and_writes_artifacts(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-success")
@@ -49,6 +58,7 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
                 )
                 result = run_next(task_id)
             task_view = show_task(task_id)
+            preflight_data = _artifact_data(task_view, "preflight_result")
 
         artifact_types = {artifact["artifact_type"] for artifact in task_view["artifacts"]}
         run = task_view["runs"][0]
@@ -63,10 +73,12 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         self.assertIn("changed_files", artifact_types)
         self.assertIn("review_summary", artifact_types)
         self.assertIn("/worktrees/", run["worktree_path"])
+        self.assertTrue(_check(preflight_data, "project_is_operator_or_known_writable")["passed"])
+        self.assertTrue(_check(preflight_data, "repo_root_is_operator_or_project_repo")["passed"])
         codex_run.assert_called_once()
         self.assertTrue(preflight_seen_before_launch["seen"])
 
-    def test_preflight_artifact_written_before_codex_launch_and_blocks_bad_project(self):
+    def test_preflight_artifact_written_before_codex_launch_and_blocks_unknown_external_project(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-preflight")
         with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
             init_db()
@@ -74,20 +86,69 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
                 "app.task_engine.run_live_docs_only"
             ) as codex_run:
                 task_id = create_live_codex_docs_only_task(
-                    project="vps",
+                    project="unknown_external",
                     title="Bad live docs task",
                     goal="Make a docs-only README.md change",
                 )
                 result = run_next(task_id)
             task_view = show_task(task_id)
-            preflight = next(artifact for artifact in task_view["artifacts"] if artifact["artifact_type"] == "preflight_result")
-            preflight_data = json.loads(Path(preflight["path"]).read_text(encoding="utf-8"))
+            preflight_data = _artifact_data(task_view, "preflight_result")
 
         self.assertFalse(result["task_succeeded"])
         self.assertEqual(result["overall_status"], "failed")
         self.assertEqual(task_view["task"]["status"], "failed")
         self.assertFalse(preflight_data["passed"])
-        self.assertTrue(any(check["name"] == "project_is_operator" and not check["passed"] for check in preflight_data["checks"]))
+        self.assertFalse(_check(preflight_data, "project_is_operator_or_known_writable")["passed"])
+        self.assertFalse(_check(preflight_data, "external_project_write_preflight_authorized")["passed"])
+        codex_run.assert_not_called()
+
+    def test_redletters_docs_only_codex_passes_preflight_and_stops_in_review(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-redletters")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            patches = _success_mocks()
+            with patches[0] as create_worktree, patches[1] as codex_run, patches[2], patches[3], patches[4]:
+                task_id = create_live_codex_docs_only_task(
+                    project="redletters",
+                    title="RedLetters README docs",
+                    goal="Make a docs-only README.md change",
+                    target_paths=["README.md"],
+                )
+                result = run_next(task_id)
+            task_view = show_task(task_id)
+            preflight_data = _artifact_data(task_view, "preflight_result")
+
+        self.assertTrue(result["task_succeeded"])
+        self.assertEqual(task_view["task"]["status"], "review")
+        self.assertTrue(_check(preflight_data, "project_is_operator_or_known_writable")["passed"])
+        self.assertTrue(_check(preflight_data, "external_project_write_preflight_authorized")["passed"])
+        self.assertTrue(_check(preflight_data, "external_project_deployment_not_allowed")["passed"])
+        self.assertEqual(_check(preflight_data, "external_project_write_preflight_authorized")["details"]["deployment_allowed"], False)
+        self.assertEqual(str(create_worktree.call_args.kwargs["repo_path"]), "/root/Projects/redletters.tellthem.ai")
+        codex_run.assert_called_once()
+
+    def test_redletters_rejects_non_docs_app_code_target_before_launch(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-redletters-app")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
+                "app.task_engine.run_live_docs_only"
+            ) as codex_run:
+                task_id = create_live_codex_docs_only_task(
+                    project="redletters",
+                    title="RedLetters bad app target",
+                    goal="Make an app code change",
+                    target_paths=["app/main.py"],
+                )
+                result = run_next(task_id)
+            task_view = show_task(task_id)
+            preflight_data = _artifact_data(task_view, "preflight_result")
+
+        self.assertFalse(result["task_succeeded"])
+        self.assertEqual(task_view["task"]["status"], "failed")
+        self.assertFalse(_check(preflight_data, "target_paths_are_policy_allowed")["passed"])
+        self.assertFalse(_check(preflight_data, "paths_are_markdown_docs")["passed"])
+        self.assertFalse(_check(preflight_data, "paths_are_policy_allowed")["passed"])
         codex_run.assert_not_called()
 
     def test_timeout_fails_and_preserves_worktree_record(self):

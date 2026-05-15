@@ -678,6 +678,14 @@ def validate_live_codex_paths_for_mode(mode: str, paths: list[str]) -> list[dict
     return validate_live_codex_docs_only_paths(paths)
 
 
+def _external_docs_project_preflight(project: str, worker: str):
+    if project == "operator":
+        return None
+    from app.project_registry import preflight_project_write
+
+    return preflight_project_write(project, worker=worker, lane="docs_only")
+
+
 def live_codex_preflight_checks(
     *,
     project: str,
@@ -697,12 +705,23 @@ def live_codex_preflight_checks(
     runtime_worktrees = get_settings().worktrees_dir.resolve()
     goal_blob = goal.lower()
     target_path_checks = validate_live_codex_docs_only_paths(target_paths)
+    external_preflight = _external_docs_project_preflight(project, worker)
+    external_project = external_preflight.project if external_preflight is not None else None
+    expected_repo_root = (
+        get_settings().repo_root.resolve()
+        if project == "operator"
+        else Path(external_project["repo_path"]).resolve()
+        if external_preflight is not None and external_preflight.authorized and external_project is not None
+        else None
+    )
+    write_policy = external_preflight.write_policy if external_preflight is not None else {}
+    project_write_policy_max_changed_files = write_policy.get("max_changed_files") if isinstance(write_policy, dict) else None
     checks = [
-        ("project_is_operator", project == "operator"),
+        ("project_is_operator_or_known_writable", project == "operator" or bool(external_preflight and external_preflight.authorized)),
         ("worker_is_codex", worker == "codex"),
         ("mode_is_live_codex_docs_only", mode == LIVE_CODEX_DOCS_ONLY_MODE),
         ("target_paths_are_policy_allowed", all(check["passed"] for check in target_path_checks)),
-        ("repo_root_is_operator_repo", repo_root == get_settings().repo_root.resolve()),
+        ("repo_root_is_operator_or_project_repo", expected_repo_root is not None and repo_root == expected_repo_root),
         ("worktree_under_runtime_worktrees", runtime_worktrees in [worktree_resolved, *worktree_resolved.parents]),
         ("canonical_checkout_not_cwd", command_cwd.resolve() != repo_root),
         ("single_live_codex_writer_available", active_delegated_writer_locks == 0),
@@ -711,10 +730,45 @@ def live_codex_preflight_checks(
         ("no_auto_commit_merge_push", not any(token in goal_blob for token in ("git commit", "git merge", "git push"))),
         ("timeout_is_10_minutes", LIVE_CODEX_TIMEOUT_SECONDS == 600),
         ("max_changed_files_is_5", LIVE_CODEX_MAX_CHANGED_FILES == 5),
+        (
+            "target_paths_within_project_write_policy_max",
+            project == "operator"
+            or not isinstance(project_write_policy_max_changed_files, int)
+            or len(target_paths) <= project_write_policy_max_changed_files,
+        ),
+        (
+            "external_project_deployment_not_allowed",
+            project == "operator" or bool(external_preflight and external_preflight.write_policy.get("deployment_allowed") is False),
+        ),
         ("worktree_exists_or_created", worktree_ready),
         ("preflight_artifact_written", True),
     ]
-    return [{"name": name, "passed": bool(passed)} for name, passed in checks] + target_path_checks
+    check_results = [{"name": name, "passed": bool(passed)} for name, passed in checks]
+    if external_preflight is not None:
+        check_results.append(
+            {
+                "name": "external_project_write_preflight_authorized",
+                "passed": external_preflight.authorized,
+                "details": {
+                    "result_code": external_preflight.result_code,
+                    "reasons": external_preflight.reasons,
+                    "allowed_lane": external_preflight.write_policy.get("allowed_lane"),
+                    "allowed_write_agents": external_preflight.write_policy.get("allowed_write_agents"),
+                    "deployment_allowed": external_preflight.write_policy.get("deployment_allowed"),
+                },
+            }
+        )
+    return check_results + target_path_checks
+
+
+def live_codex_docs_only_project_max_changed_files(project: str, worker: str) -> int:
+    if project == "operator":
+        return LIVE_CODEX_MAX_CHANGED_FILES
+    from app.project_registry import preflight_project_write
+
+    preflight = preflight_project_write(project, worker=worker, lane="docs_only")
+    value = preflight.write_policy.get("max_changed_files")
+    return value if preflight.authorized and isinstance(value, int) else LIVE_CODEX_MAX_CHANGED_FILES
 
 
 def live_codex_tests_only_preflight_checks(

@@ -39,6 +39,7 @@ from app.policies import (
     LIVE_CODEX_TESTS_ONLY_TARGETS,
     LIVE_CODEX_TIMEOUT_SECONDS,
     live_codex_allowed_targets_for_mode,
+    live_codex_docs_only_project_max_changed_files,
     live_codex_model_file_preflight_checks,
     live_codex_policy_file_preflight_checks,
     live_codex_preflight_checks,
@@ -49,6 +50,7 @@ from app.policies import (
     validate_live_codex_policy_file_content,
     validate_live_codex_tests_only_content,
 )
+from app.project_registry import get_project
 from app.state_manager import assert_transition, validate_status
 from tools.git_tools import (
     create_worktree,
@@ -1217,9 +1219,15 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
         target_paths = [target_paths]
 
     settings = get_settings()
+    repo_path = settings.repo_root
+    if mode == LIVE_CODEX_DOCS_ONLY_MODE and task["project"] != "operator":
+        try:
+            repo_path = Path(get_project(task["project"])["repo_path"])
+        except KeyError:
+            repo_path = settings.repo_root
     branch_name = delegated_branch_name(task_id=task["id"], worker="codex", title=task["title"])
     worktree_path = delegated_worktree_path(task_id=task["id"], worker="codex")
-    worktree_result = create_worktree(repo_path=settings.repo_root, worktree_path=worktree_path, branch_name=branch_name)
+    worktree_result = create_worktree(repo_path=repo_path, worktree_path=worktree_path, branch_name=branch_name)
     record_worker_execution(run_id, "shell_ops", worktree_result)
     worktree_ready = worktree_result.exit_code == 0 or worktree_path.exists()
     update_run_workspace(run_id, worktree_path=str(worktree_path), branch_name=branch_name)
@@ -1280,7 +1288,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
             worker=worker,
             mode=delegation_mode,
             target_paths=target_paths,
-            repo_root=settings.repo_root,
+            repo_root=repo_path,
             worktree_path=worktree_path,
             command_cwd=worktree_path,
             active_delegated_writer_locks=_active_delegated_writer_count_excluding(run_id),
@@ -1412,6 +1420,15 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
     changed_files = [line.strip() for line in changed_result.stdout.splitlines() if line.strip()]
     post_run_checks = validate_live_codex_changed_files_for_mode(mode, changed_files)
     post_run_checks.extend(_live_codex_content_checks(worktree_path, changed_files, mode))
+    if mode == LIVE_CODEX_DOCS_ONLY_MODE:
+        project_max_changed_files = live_codex_docs_only_project_max_changed_files(task["project"], worker or "")
+        post_run_checks.append(
+            {
+                "name": "changed_file_count_within_project_write_policy_max",
+                "passed": len(changed_files) <= project_max_changed_files,
+                "details": {"count": len(changed_files), "max": project_max_changed_files},
+            }
+        )
     post_run_checks.append(
         {
             "name": "no_auto_commit_or_merge",

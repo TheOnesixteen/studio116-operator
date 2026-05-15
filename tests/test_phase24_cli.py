@@ -48,6 +48,32 @@ class Phase24CliTests(unittest.TestCase):
         )
         print_mock.assert_called_with("task-123")
 
+    def test_cli_rejects_gemini_cli_for_live_codex_docs_only(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-phase24-cli-gemini-live-docs")
+        argv = [
+            "task",
+            "create",
+            "--project",
+            "operator",
+            "--type",
+            "delegated",
+            "--title",
+            "Gemini live docs",
+            "--goal",
+            "Make a docs-only change",
+            "--worker",
+            "gemini_cli",
+            "--delegation-mode",
+            "live_codex_docs_only",
+        ]
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}), mock.patch(
+            "app.main.create_live_codex_docs_only_task"
+        ) as create_docs_task, mock.patch("sys.stderr"):
+            exit_code = main(argv)
+
+        self.assertEqual(exit_code, 1)
+        create_docs_task.assert_not_called()
+
     def test_cli_accepts_live_codex_tests_only_delegation_mode(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-phase24-cli")
         argv = [
