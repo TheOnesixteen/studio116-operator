@@ -35,6 +35,24 @@ workers:
     adapter: adapters.codex
     notes: "Best for implementation, patching, test-fix cycles, and concrete execution."
 
+  gemini_cli:
+    type: cli
+    command: "gemini"
+    role: reviewer_and_second_opinion
+    strengths:
+      - broad_review
+      - alternative_reasoning
+      - critique
+      - spec_gap_detection
+      - risk_identification
+    weaknesses:
+      - not_yet_proven_for_file_writes
+      - may_need_tighter_prompts
+    concurrency: 1
+    cost: google_subscription_or_api
+    adapter: adapters.gemini_cli
+    notes: "Best for second-opinion review, critique, risk checks, and spec validation. No write authority until proven."
+
   shell_ops:
     type: native
     role: ops_and_diagnostics
