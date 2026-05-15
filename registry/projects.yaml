@@ -176,6 +176,7 @@ projects:
     allowed_agents:
       - codex
       - claude_code
+      - gemini_cli
     write_policy:
       writable: false
       allowed_write_agents: []
