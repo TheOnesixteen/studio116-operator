@@ -190,6 +190,11 @@ class Phase210eExternalScaffoldTests(unittest.TestCase):
 
         self.assertEqual(_failed_check_names(checks), set())
 
+    def test_redletters_scaffold_preflight_allows_init_db_py(self):
+        checks = _redletters_scaffold_preflight(["init_db.py"])
+
+        self.assertEqual(_failed_check_names(checks), set())
+
     def test_redletters_scaffold_blocks_ai_generation_env_and_deploy_targets(self):
         blocked_cases = {
             "app/ai_generation.py": {"paths_are_scaffold_allowed", "target_paths_are_policy_allowed"},

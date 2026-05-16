@@ -101,6 +101,7 @@ LIVE_CODEX_SCAFFOLD_ONLY_TARGETS = [
     "schema.sql",
     "tests/*",
     "requirements.txt",
+    "init_db.py",
     "run.py",
     "README.md",
 ]
@@ -554,7 +555,16 @@ def _path_matches_external_docs_target(path: str) -> bool:
 
 
 def _path_matches_scaffold_target(path: str) -> bool:
-    if path in {"app/__init__.py", "app/config.py", "app/routes.py", "schema.sql", "requirements.txt", "run.py", "README.md"}:
+    if path in {
+        "app/__init__.py",
+        "app/config.py",
+        "app/routes.py",
+        "schema.sql",
+        "requirements.txt",
+        "init_db.py",
+        "run.py",
+        "README.md",
+    }:
         return True
     return (
         (path.startswith("templates/") and path != "templates/")
