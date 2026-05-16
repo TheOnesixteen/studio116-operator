@@ -284,3 +284,10 @@ That belongs elsewhere.
   - /health returns {"status":"ok"}.
   - /healthz returns {"status":"ok"}.
 - Next recommended phase: Mission 007 - first findings read model / repository layer.
+
+## Latest checkpoint - RedLetters findings read layer added
+
+- RedLetters commit: 0589e32 Add findings read layer
+- Added app/findings.py with read-only SQLite helpers for listing findings and fetching a finding by id.
+- Operator Mission 007A completed through review/promotion.
+- Next recommended phase: Mission 007B - add tests for findings read layer or wire findings routes to read layer.
