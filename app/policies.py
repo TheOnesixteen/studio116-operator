@@ -95,6 +95,7 @@ LIVE_CODEX_MODEL_FILE_ONLY_TARGETS = ["app/models.py", "app/project_registry.py"
 LIVE_CODEX_SCAFFOLD_ONLY_TARGETS = [
     "app/__init__.py",
     "app/config.py",
+    "app/db.py",
     "app/routes.py",
     "templates/*",
     "static/*",
@@ -558,6 +559,7 @@ def _path_matches_scaffold_target(path: str) -> bool:
     if path in {
         "app/__init__.py",
         "app/config.py",
+        "app/db.py",
         "app/routes.py",
         "schema.sql",
         "requirements.txt",

@@ -195,6 +195,11 @@ class Phase210eExternalScaffoldTests(unittest.TestCase):
 
         self.assertEqual(_failed_check_names(checks), set())
 
+    def test_redletters_scaffold_preflight_allows_app_db_py(self):
+        checks = _redletters_scaffold_preflight(["app/db.py"])
+
+        self.assertEqual(_failed_check_names(checks), set())
+
     def test_redletters_scaffold_blocks_ai_generation_env_and_deploy_targets(self):
         blocked_cases = {
             "app/ai_generation.py": {"paths_are_scaffold_allowed", "target_paths_are_policy_allowed"},
@@ -207,6 +212,13 @@ class Phase210eExternalScaffoldTests(unittest.TestCase):
             with self.subTest(target=target):
                 failed = _failed_check_names(_redletters_scaffold_preflight([target]))
                 self.assertTrue(expected_failures.issubset(failed))
+
+    def test_redletters_scaffold_blocks_arbitrary_app_files(self):
+        for target in ("app/models.py", "app/main.py", "app/email_sender.py", "app/publishing.py"):
+            with self.subTest(target=target):
+                failed = _failed_check_names(_redletters_scaffold_preflight([target]))
+                self.assertIn("paths_are_scaffold_allowed", failed)
+                self.assertIn("target_paths_are_policy_allowed", failed)
 
     def test_redletters_scaffold_blocks_arbitrary_root_files(self):
         for target in ("wsgi.py", "manage.py", "notes.txt"):
