@@ -291,3 +291,10 @@ That belongs elsewhere.
 - Added app/findings.py with read-only SQLite helpers for listing findings and fetching a finding by id.
 - Operator Mission 007A completed through review/promotion.
 - Next recommended phase: Mission 007B - add tests for findings read layer or wire findings routes to read layer.
+
+## Latest checkpoint - Mission 007B findings tests completed
+
+- Mission 007B task id: 20a0c4cc-64ca-477f-9b19-fc1b7178e75a
+- Run id: d54dc734-eea7-4372-b45d-2a5c7538e4d0
+- Goal: add tests/test_findings.py for app/findings.py.
+- Next step: approve/promote if not already done, commit in RedLetters, run pytest, then proceed to wire findings routes to read layer.
