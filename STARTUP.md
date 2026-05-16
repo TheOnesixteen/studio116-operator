@@ -240,3 +240,11 @@ That belongs elsewhere.
 - Next recommended phase: RedLetters Mission 003 - run/install/test scaffold locally, then add minimal app startup/test command.
 - Do not broaden deployment permissions yet.
 - Keep RedLetters deployment disabled until local app smoke test passes.
+
+## Latest checkpoint - RedLetters scaffold smoke test passed
+
+- RedLetters commit: 3290cb2 Add pytest test runner
+- RedLetters scaffold installs in venv successfully.
+- Smoke test passes with pytest: 1 passed.
+- Proven: Operator-built scaffold can be installed and tested locally.
+- Next recommended phase: RedLetters Mission 004 - add minimal app run entrypoint or first DB initialization utility, still no deployment.
