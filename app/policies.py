@@ -92,11 +92,16 @@ LIVE_CODEX_EXTERNAL_DOCS_ONLY_TARGETS = ["docs/*.md"]
 LIVE_CODEX_TESTS_ONLY_TARGETS = ["tests/test_*.py"]
 LIVE_CODEX_POLICY_FILE_ONLY_TARGETS = ["app/policies.py", "app/project_registry.py"]
 LIVE_CODEX_MODEL_FILE_ONLY_TARGETS = ["app/models.py", "app/project_registry.py"]
+LIVE_CODEX_SCAFFOLD_DOMAIN_READ_TARGETS = [
+    "app/findings.py",
+    "app/repositories.py",
+]
 LIVE_CODEX_SCAFFOLD_ONLY_TARGETS = [
     "app/__init__.py",
     "app/config.py",
     "app/db.py",
     "app/routes.py",
+    *LIVE_CODEX_SCAFFOLD_DOMAIN_READ_TARGETS,
     "templates/*",
     "static/*",
     "schema.sql",
@@ -556,17 +561,19 @@ def _path_matches_external_docs_target(path: str) -> bool:
 
 
 def _path_matches_scaffold_target(path: str) -> bool:
-    if path in {
+    explicit_scaffold_targets = {
         "app/__init__.py",
         "app/config.py",
         "app/db.py",
         "app/routes.py",
+        *LIVE_CODEX_SCAFFOLD_DOMAIN_READ_TARGETS,
         "schema.sql",
         "requirements.txt",
         "init_db.py",
         "run.py",
         "README.md",
-    }:
+    }
+    if path in explicit_scaffold_targets:
         return True
     return (
         (path.startswith("templates/") and path != "templates/")
