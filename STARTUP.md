@@ -258,3 +258,10 @@ That belongs elsewhere.
   - /health returns {"status":"ok"}.
   - /healthz returns {"status":"ok"}.
 - Next recommended phase: RedLetters Mission 005 - database initialization utility.
+
+## Latest checkpoint - RedLetters database init passed
+
+- RedLetters commit: 11f51d8 Add database initialization utility
+- init_db.py created instance/redletters.sqlite3 successfully.
+- Smoke tests still pass: pytest 1 passed.
+- Next recommended phase: Mission 006 - add first database access/helper layer or minimal findings read model.
