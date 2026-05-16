@@ -412,3 +412,73 @@ These emerged from the Codex sessions and are relevant to how the Operator shoul
 4. **Sentiment gates need real data before they're useful.** Bypassing the sentiment gate entirely was the right call for stocks with zero trades. A gate that blocks 100% of entries is not a gate — it's a wall. Gates should be evaluated against real outcomes before being trusted.
 
 5. **Git repo initialization was deferred.** `/root/Projects/trader.116.studio/.git` exists as an empty directory. The project has no version control. This is a risk — if a build script is broken by a Codex change, there is no rollback. The Operator should initialize this repo before the next agent session touches it.
+# Studio 116 Operator — Changelog
+*Append this section to OPERATOR.md under a new `## Changelog` heading.*
+
+---
+
+## Changelog
+
+### 2026-05-16 — Trading System Build-Out
+
+**What was done:**
+
+Complete build and tuning of the Studio 116 ghost trading system. This work happened in parallel with operator development. The trading system is a separate project from the Operator but shares the same droplet and represents the first real use case the Operator will eventually orchestrate.
+
+**Codex sessions completed:**
+
+1. **Read-only audit** — Full inventory of dashboard paths, data sources, stale files, and stock data path bugs. Identified that Wave Rider Stocks was reading the wrong log file (runs-v2 instead of wave-rider-stocks-v2).
+
+2. **Dashboard data path fixes** — Fixed stock builder to read correct log. Added `candidates.json` generation to Sniper. Updated all dashboard pages to derive metrics from live ledger data instead of hardcoded stale values.
+
+3. **Dashboard page split and rebuild** — Replaced 4 pages with 6 distinct pages, each with a dedicated color theme. Created new `build-analysis-json.js` script implementing the "did vs should have done" analysis loop. Added script to cron build.
+
+4. **Strategy gates deployed:**
+   - Hard EMA cross staleness gate on Wave Rider Crypto: `bars_since_ema_cross > 10` → skip with reason `ema_cross_too_stale`. Evidence: early-entry PF 0.95 vs late-entry PF 0.60 across 89 historical trades.
+   - Sentiment gate removed from Wave Rider Stocks: `sentimentOk` always returns true. Was blocking all entries.
+
+5. **Trailing stop widened:** `TRAILING_STOP_PCT` changed from 1.2% to 2.0% on Wave Rider Crypto. Evidence: 66% of 89 closed trades were trailing stop exits. Winners were being cut before reaching the 1.8% take profit target.
+
+**Key architectural decisions made:**
+
+| Decision | Rationale |
+|---|---|
+| "Did vs should have done" loop as core tuning signal | Gap between what the system did and what it should have done is the tuning target. Closing that gap = making money. |
+| One recommended tuning action at a time | Avoid parameter churn. Rusty approves all changes before they go live. |
+| Ghost mode until PF > 1.15 sustained | Don't risk real capital on a losing system. |
+| Dashboard pages answer three questions | What is happening? Is it good or bad? What should I watch next? |
+
+**Files created or significantly changed:**
+
+```
+/root/Projects/trader.116.studio/scripts/build-analysis-json.js   (NEW)
+/root/Projects/trader.116.studio/scripts/build-all-trader-dashboards.sh  (updated — 4 builders now)
+/root/Projects/trader.116.studio/scripts/build-ghost-ledger-json.js  (updated — telemetry recovery)
+/root/Projects/trader.116.studio/scripts/build-wave-rider-dashboard-json.js  (updated — correct stock log)
+/root/n8n/trading-bot/generate-wave-rider-crypto-workflow.js  (updated — EMA gate + trailing stop)
+/root/n8n/trading-bot/generate-workflow.js  (updated — sentiment bypass)
+/var/www/trader/index.html  (Command Center — full rebuild)
+/var/www/trader/sniper/crypto/index.html  (NEW)
+/var/www/trader/sniper/stocks/index.html  (NEW)
+/var/www/trader/waverider/crypto/index.html  (full rebuild)
+/var/www/trader/waverider/stocks/index.html  (full rebuild)
+/var/www/trader/performance/index.html  (full rebuild — Tuning Lab)
+```
+
+**Current system state:** See `/root/Projects/trader.116.studio/docs/TRADING-SYSTEM.md`
+
+---
+
+### Lessons Learned from Trading System Build (Relevant to Operator Design)
+
+These emerged from the Codex sessions and are relevant to how the Operator should handle similar work:
+
+1. **Always read the data shape before writing builders.** Codex spent time patching code that was reading the wrong fields because the actual log schema wasn't inspected first. The Operator should require agents to read source data before writing builders.
+
+2. **Wrong log file = silent empty dashboard.** The stocks builder was reading `runs-v2.jsonl` instead of `wave-rider-stocks-v2.jsonl`. Everything compiled and ran, but the output was silently empty. The Operator should verify that generated outputs contain expected data, not just that they exist.
+
+3. **n8n API strips active status on PUT — strip read-only fields before push.** Required several iterations to discover which fields are read-only. Now documented in TRADING-SYSTEM.md.
+
+4. **Sentiment gates need real data before they're useful.** Bypassing the sentiment gate entirely was the right call for stocks with zero trades. A gate that blocks 100% of entries is not a gate — it's a wall. Gates should be evaluated against real outcomes before being trusted.
+
+5. **Git repo initialization was deferred.** `/root/Projects/trader.116.studio/.git` exists as an empty directory. The project has no version control. This is a risk — if a build script is broken by a Codex change, there is no rollback. The Operator should initialize this repo before the next agent session touches it.
