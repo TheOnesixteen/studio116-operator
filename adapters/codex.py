@@ -111,9 +111,21 @@ def live_model_file_command(*, worktree_path: Path, packet_path: Path) -> list[s
         "Modify only the target_paths listed in the packet. Create those files if needed. "
         "Do not install packages, use network-dependent work, "
         "commit, merge, push, modify files outside target_paths, "
-        "modify hidden files, modify env files, or touch deployment/config/system/runtime files."
+        "modify hidden files, modify env files, or touch deployment/config/system/runtime files. "
+        "When done, leave the changes unstaged in the worktree."
     )
-    return ["codex", "exec", "-C", str(worktree_path), prompt]
+    return [
+        "codex",
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--json",
+        "--output-last-message",
+        str(packet_path.with_name("codex_last_message.txt")),
+        "-C",
+        str(worktree_path),
+        prompt,
+    ]
 
 
 def live_scaffold_only_command(*, worktree_path: Path, packet_path: Path) -> list[str]:

@@ -3,7 +3,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.codex import live_docs_only_command, live_scaffold_only_command, run_live_docs_only, run_live_scaffold_only
+from adapters.codex import (
+    live_docs_only_command,
+    live_model_file_command,
+    live_scaffold_only_command,
+    run_live_docs_only,
+    run_live_model_file,
+    run_live_scaffold_only,
+)
 
 
 class CodexAdapterTests(unittest.TestCase):
@@ -49,6 +56,33 @@ class CodexAdapterTests(unittest.TestCase):
 
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("Unable to read worker packet", result.stderr)
+
+    def test_live_model_file_command_matches_noninteractive_docs_pattern(self):
+        packet_path = Path("/tmp/operator-artifacts/worker_packet.json")
+        command = live_model_file_command(worktree_path=Path("/tmp/worktree"), packet_path=packet_path)
+
+        self.assertEqual(command[:2], ["codex", "exec"])
+        self.assertIn("--sandbox", command)
+        self.assertIn("workspace-write", command)
+        self.assertIn("--json", command)
+        self.assertIn("--output-last-message", command)
+        self.assertIn("-C", command)
+        self.assertIn("/tmp/worktree", command)
+        self.assertIn(str(packet_path), command[-1])
+
+    def test_run_live_model_file_passes_worker_packet_on_stdin(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            packet_path = tmp_path / "worker_packet.json"
+            packet_json = '{"target_paths":["requirements.txt"]}'
+            packet_path.write_text(packet_json, encoding="utf-8")
+            completed = mock.Mock(stdout='{"event":"done"}\n', stderr="", returncode=0)
+
+            with mock.patch("adapters.codex.subprocess.run", return_value=completed) as subprocess_run:
+                result = run_live_model_file(worktree_path=tmp_path / "worktree", packet_path=packet_path, timeout_seconds=12)
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(subprocess_run.call_args.kwargs["input"], packet_json)
 
     def test_live_scaffold_only_command_is_noninteractive_workspace_write(self):
         packet_path = Path("/tmp/operator-artifacts/worker_packet.json")

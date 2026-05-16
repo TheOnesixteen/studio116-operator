@@ -88,7 +88,7 @@ def run_next(task_id: str | None = None) -> dict:
                 "task_id": task["id"],
                 "run_id": run_id,
             }
-        except Exception as exc:
+        except BaseException as exc:
             if run_id:
                 finish_run(run_id, task_id=task["id"], status="failed", exit_code=1, summary=str(exc))
             current = get_task(task["id"])

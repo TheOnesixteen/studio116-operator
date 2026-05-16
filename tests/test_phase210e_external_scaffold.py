@@ -10,7 +10,7 @@ from app.db import init_db, transaction
 from app.main import main
 from app.models import CommandResult
 from app.policies import live_codex_model_file_preflight_checks, live_codex_scaffold_only_preflight_checks
-from app.router import create_live_codex_docs_only_task, create_live_codex_scaffold_only_task
+from app.router import create_live_codex_docs_only_task, create_live_codex_model_file_task, create_live_codex_scaffold_only_task
 from app.scheduler import run_next
 from app.task_engine import approve_task, reject_task, show_task
 
@@ -20,6 +20,15 @@ README_ROLLBACK_DIFF = "diff --git a/README.md b/README.md\n--- a/README.md\n+++
 SCAFFOLD_TARGETS = ["app/__init__.py", "app/config.py", "app/routes.py"]
 SCAFFOLD_CHANGED_STDOUT = "".join(f"{path}\n" for path in SCAFFOLD_TARGETS)
 SCAFFOLD_DIFF = "".join(f"diff --git a/{path} b/{path}\n" for path in SCAFFOLD_TARGETS)
+REQUIREMENTS_DIFF = (
+    "diff --git a/requirements.txt b/requirements.txt\n"
+    "new file mode 100644\n"
+    "--- /dev/null\n"
+    "+++ b/requirements.txt\n"
+    "@@ -0,0 +1,2 @@\n"
+    "+Flask>=3.0,<4\n"
+    "+pytest>=8,<9\n"
+)
 
 
 def _runtime(name: str) -> tuple[str, str]:
@@ -221,6 +230,105 @@ class Phase210eExternalScaffoldTests(unittest.TestCase):
         )
 
         self.assertEqual(_failed_check_names(checks), set())
+
+    def test_redletters_model_file_external_run_writes_completion_artifacts(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-phase210e-model-external-artifacts")
+
+        def _codex_success(*, worktree_path, packet_path, timeout_seconds):
+            self.assertEqual(Path(packet_path).name, "worker_packet.json")
+            self.assertTrue(str(worktree_path).endswith("/codex"))
+            requirements = Path(worktree_path) / "requirements.txt"
+            requirements.parent.mkdir(parents=True, exist_ok=True)
+            requirements.write_text("Flask>=3.0,<4\npytest>=8,<9\n", encoding="utf-8")
+            return CommandResult("codex exec", "ok", "", 0)
+
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
+                "app.task_engine.run_codex_live_model_file", side_effect=_codex_success
+            ) as codex_run, mock.patch(
+                "app.task_engine.git_diff", return_value=CommandResult("git diff", REQUIREMENTS_DIFF, "", 0)
+            ), mock.patch(
+                "app.task_engine.git_changed_files",
+                return_value=CommandResult("git diff --name-only", "requirements.txt\n", "", 0),
+            ), mock.patch(
+                "app.task_engine.git_head", return_value=CommandResult("git rev-parse HEAD", "abc123\n", "", 0)
+            ):
+                task_id = create_live_codex_model_file_task(
+                    project="redletters",
+                    title="RedLetters requirements",
+                    goal="Create requirements.txt only",
+                    target_paths=["requirements.txt"],
+                )
+                result = run_next(task_id)
+            task_view = show_task(task_id)
+            artifact_types = {artifact["artifact_type"] for artifact in task_view["artifacts"]}
+            changed = _artifact_data(task_view, "changed_files")
+            review = _artifact_data(task_view, "review_summary")
+
+        self.assertTrue(result["task_succeeded"])
+        self.assertEqual(task_view["task"]["status"], "review")
+        self.assertIn("worker_result", artifact_types)
+        self.assertIn("git_diff", artifact_types)
+        self.assertIn("changed_files", artifact_types)
+        self.assertIn("review_summary", artifact_types)
+        self.assertEqual(changed["changed_files"], ["requirements.txt"])
+        self.assertTrue(changed["passed"])
+        self.assertTrue(_check(changed, "changed_file_count_within_project_write_policy_max")["passed"])
+        self.assertEqual(review["task_stops_in"], "review")
+        codex_run.assert_called_once()
+
+    def test_redletters_model_file_external_no_change_fails_not_running(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-phase210e-model-external-no-change")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
+                "app.task_engine.run_codex_live_model_file", return_value=CommandResult("codex exec", "ok", "", 0)
+            ), mock.patch("app.task_engine.git_diff", return_value=CommandResult("git diff", "", "", 0)), mock.patch(
+                "app.task_engine.git_changed_files",
+                return_value=CommandResult("git diff --name-only", "", "", 0),
+            ), mock.patch(
+                "app.task_engine.git_head", return_value=CommandResult("git rev-parse HEAD", "abc123\n", "", 0)
+            ):
+                task_id = create_live_codex_model_file_task(
+                    project="redletters",
+                    title="RedLetters empty requirements attempt",
+                    goal="Create requirements.txt only",
+                    target_paths=["requirements.txt"],
+                )
+                result = run_next(task_id)
+            task_view = show_task(task_id)
+            changed = _artifact_data(task_view, "changed_files")
+            review = _artifact_data(task_view, "review_summary")
+
+        self.assertFalse(result["task_succeeded"])
+        self.assertEqual(task_view["task"]["status"], "failed")
+        self.assertFalse(changed["passed"])
+        self.assertEqual(review["task_stops_in"], "failed")
+        self.assertIn("no changes", result["summary"])
+
+    def test_redletters_model_file_interruption_marks_task_and_run_failed(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-phase210e-model-external-interrupted")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
+                "app.task_engine.run_codex_live_model_file", side_effect=KeyboardInterrupt("interrupted")
+            ), mock.patch(
+                "app.task_engine.git_head", return_value=CommandResult("git rev-parse HEAD", "abc123\n", "", 0)
+            ):
+                task_id = create_live_codex_model_file_task(
+                    project="redletters",
+                    title="RedLetters interrupted requirements attempt",
+                    goal="Create requirements.txt only",
+                    target_paths=["requirements.txt"],
+                )
+                with self.assertRaises(KeyboardInterrupt):
+                    run_next(task_id)
+            task_view = show_task(task_id)
+
+        self.assertEqual(task_view["task"]["status"], "failed")
+        self.assertEqual(task_view["runs"][0]["status"], "failed")
+        self.assertEqual(task_view["runs"][0]["exit_code"], 1)
 
     def test_gemini_cannot_run_live_codex_scaffold_only(self):
         checks = _redletters_scaffold_preflight(["app/routes.py"], worker="gemini_cli")

@@ -1548,7 +1548,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
                 "details": {"count": len(changed_files), "max": project_max_changed_files},
             }
         )
-    elif mode == LIVE_CODEX_SCAFFOLD_ONLY_MODE and task["project"] != "operator":
+    elif mode in {LIVE_CODEX_MODEL_FILE_ONLY_MODE, LIVE_CODEX_SCAFFOLD_ONLY_MODE} and task["project"] != "operator":
         project_write = preflight_project_write(task["project"], worker=worker or "", lane="scaffold_only")
         project_max_changed_files = project_write.write_policy.get("max_changed_files")
         if isinstance(project_max_changed_files, int):
