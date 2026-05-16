@@ -185,16 +185,48 @@ class Phase210eExternalScaffoldTests(unittest.TestCase):
         self.assertTrue(_check(preflight, "external_project_deployment_not_allowed")["passed"])
         codex_run.assert_called_once()
 
+    def test_redletters_scaffold_preflight_allows_run_py(self):
+        checks = _redletters_scaffold_preflight(["run.py"])
+
+        self.assertEqual(_failed_check_names(checks), set())
+
     def test_redletters_scaffold_blocks_ai_generation_env_and_deploy_targets(self):
         blocked_cases = {
             "app/ai_generation.py": {"paths_are_scaffold_allowed", "target_paths_are_policy_allowed"},
             ".env": {"paths_are_scaffold_allowed", "no_hidden_files", "no_env_files", "no_deploy_config_system_files"},
             "deploy/release.sh": {"paths_are_scaffold_allowed", "no_deploy_config_system_files"},
+            "systemd/redletters.service": {"paths_are_scaffold_allowed", "no_deploy_config_system_files"},
+            "Caddyfile": {"paths_are_scaffold_allowed", "no_deploy_config_system_files"},
         }
         for target, expected_failures in blocked_cases.items():
             with self.subTest(target=target):
                 failed = _failed_check_names(_redletters_scaffold_preflight([target]))
                 self.assertTrue(expected_failures.issubset(failed))
+
+    def test_redletters_scaffold_blocks_arbitrary_root_files(self):
+        for target in ("wsgi.py", "manage.py", "notes.txt"):
+            with self.subTest(target=target):
+                failed = _failed_check_names(_redletters_scaffold_preflight([target]))
+                self.assertIn("paths_are_scaffold_allowed", failed)
+                self.assertIn("target_paths_are_policy_allowed", failed)
+
+    def test_external_single_file_model_task_constraints_use_scaffold_wording(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-phase210e-external-model-constraints")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            task_id = create_live_codex_model_file_task(
+                project="redletters",
+                title="RedLetters run entrypoint",
+                goal="Create run.py only",
+                target_paths=["run.py"],
+            )
+            task_view = show_task(task_id)
+
+        constraints = json.loads(task_view["task"]["constraints_json"])
+        self.assertIn("Target policy-whitelisted scaffold path only: run.py", constraints)
+        self.assertIn("No code changes outside the requested approved scaffold path", constraints)
+        self.assertNotIn("Target policy-whitelisted model file only: run.py", constraints)
+        self.assertNotIn("No app code changes outside app/models.py", constraints)
 
     def test_unknown_project_scaffold_preflight_fails(self):
         checks = live_codex_scaffold_only_preflight_checks(

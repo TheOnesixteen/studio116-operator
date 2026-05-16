@@ -225,6 +225,16 @@ def create_live_codex_model_file_task(
     requested_by: str = "Rusty",
 ) -> str:
     target_paths = target_paths or ["app/models.py"]
+    if project == "operator":
+        phase_constraint = "Phase 2.6a live Codex model-file slice"
+        target_constraint = f"Target policy-whitelisted model file only: {', '.join(target_paths)}"
+        scope_constraint = "No app code changes outside app/models.py"
+        metadata = {"phase": "2.6a", "live_codex_model_file_whitelist": True, "model_file_content_hardening": True}
+    else:
+        phase_constraint = "Phase 2.10e live Codex external single-file scaffold slice"
+        target_constraint = f"Target policy-whitelisted scaffold path only: {', '.join(target_paths)}"
+        scope_constraint = "No code changes outside the requested approved scaffold path"
+        metadata = {"phase": "2.10e", "live_codex_external_single_file_scaffold_whitelist": True}
     return create_task(
         project=project,
         task_type="delegated",
@@ -232,13 +242,13 @@ def create_live_codex_model_file_task(
         goal=goal,
         requested_by=requested_by,
         constraints=[
-            "Phase 2.6a live Codex model-file slice",
-            f"Target policy-whitelisted model file only: {', '.join(target_paths)}",
+            phase_constraint,
+            target_constraint,
             "One writable live Codex task at a time",
             "Use isolated worktree only",
             "Canonical checkout must remain untouched",
             "Timeout after 10 minutes",
-            "No app code changes outside app/models.py",
+            scope_constraint,
             "No tests changes",
             "No registry changes",
             "No infrastructure changes",
@@ -267,7 +277,7 @@ def create_live_codex_model_file_task(
             "read_only": False,
             "target_paths": target_paths,
         },
-        metadata={"phase": "2.6a", "live_codex_model_file_whitelist": True, "model_file_content_hardening": True},
+        metadata=metadata,
     )
 
 
