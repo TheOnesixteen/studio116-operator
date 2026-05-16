@@ -265,3 +265,9 @@ That belongs elsewhere.
 - init_db.py created instance/redletters.sqlite3 successfully.
 - Smoke tests still pass: pytest 1 passed.
 - Next recommended phase: Mission 006 - add first database access/helper layer or minimal findings read model.
+
+## Latest checkpoint - RedLetters database helper added
+
+- RedLetters commit: 3c75b41 Add database helper layer
+- Added app/db.py with SQLite helpers, row dictionaries, foreign keys, request-scoped get_db, and teardown cleanup.
+- Next recommended phase: Mission 006B - wire database helper into app factory or add focused tests for db helper.
