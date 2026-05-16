@@ -230,3 +230,13 @@ Do not use it to track:
 - implementation notes
 
 That belongs elsewhere.
+
+## Latest checkpoint - RedLetters scaffold promoted
+
+- Operator milestone tag: phase2.10g-redletters-scaffold-promoted
+- RedLetters repo commit: 27e5f65 Add initial RedLetters Operator scaffold
+- Proven: external docs lane, external scaffold lane, Codex execution, review gate, promotion into real external repo.
+- RedLetters currently has: app factory, config, routes, base template, stylesheet, schema, requirements, and architecture docs.
+- Next recommended phase: RedLetters Mission 003 - run/install/test scaffold locally, then add minimal app startup/test command.
+- Do not broaden deployment permissions yet.
+- Keep RedLetters deployment disabled until local app smoke test passes.
