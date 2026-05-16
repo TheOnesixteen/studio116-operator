@@ -271,3 +271,16 @@ That belongs elsewhere.
 - RedLetters commit: 3c75b41 Add database helper layer
 - Added app/db.py with SQLite helpers, row dictionaries, foreign keys, request-scoped get_db, and teardown cleanup.
 - Next recommended phase: Mission 006B - wire database helper into app factory or add focused tests for db helper.
+
+## Latest checkpoint - RedLetters app/db integration smoke test passed
+
+- RedLetters commit: b35809d Initialize database helper in app factory
+- app/db.py is wired into create_app().
+- init_db.py initializes instance/redletters.sqlite3.
+- pytest passes: 1 passed.
+- Local app boots on 127.0.0.1:5016.
+- Verified:
+  - / returns RedLetters MVP route scaffold JSON.
+  - /health returns {"status":"ok"}.
+  - /healthz returns {"status":"ok"}.
+- Next recommended phase: Mission 007 - first findings read model / repository layer.
