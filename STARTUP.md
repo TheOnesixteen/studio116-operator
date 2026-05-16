@@ -248,3 +248,13 @@ That belongs elsewhere.
 - Smoke test passes with pytest: 1 passed.
 - Proven: Operator-built scaffold can be installed and tested locally.
 - Next recommended phase: RedLetters Mission 004 - add minimal app run entrypoint or first DB initialization utility, still no deployment.
+
+## Latest checkpoint - RedLetters routes smoke test passed
+
+- RedLetters commit: b139a6a Register routes in app factory
+- Local Flask app boots on 127.0.0.1:5016.
+- Verified routes:
+  - / returns RedLetters MVP route scaffold JSON.
+  - /health returns {"status":"ok"}.
+  - /healthz returns {"status":"ok"}.
+- Next recommended phase: RedLetters Mission 005 - database initialization utility.
