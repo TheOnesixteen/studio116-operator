@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHONPATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" python3 -m app.main "$@"
+OPERATOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Preserve the caller's working directory so `operator do` can infer project
+# from cwd, then change into the operator directory so Python resolves
+# `app.main` against the operator package, not any `app.py` in the caller's dir.
+export OPERATOR_CWD="${OPERATOR_CWD:-$PWD}"
+cd "$OPERATOR_DIR"
+python3 -m app.main "$@"

@@ -298,3 +298,11 @@ That belongs elsewhere.
 - Run id: d54dc734-eea7-4372-b45d-2a5c7538e4d0
 - Goal: add tests/test_findings.py for app/findings.py.
 - Next step: approve/promote if not already done, commit in RedLetters, run pytest, then proceed to wire findings routes to read layer.
+
+## Checkpoint 2026-05-16 — Operator intake layer
+
+- operator ingest <spec.md> and operator do "quick task" both live
+- Both compile to StandardizedTask before engine sees anything
+- Project inference from OPERATOR_CWD, risk scoring, three normalization levels
+- Policy enforcement: write_intent, allowed agents, blocked paths
+- WARNING: app/intake/normalizer.py is 557 lines — split into strategy modules before next intake work

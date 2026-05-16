@@ -28,7 +28,18 @@ from app.router import (
     create_live_codex_tests_only_task,
 )
 from app.scheduler import run_next
-from app.task_engine import approve_task, create_task, list_tasks, reject_task, show_task, task_inbox
+from app.task_engine import (
+    approve_task,
+    create_task,
+    create_task_from_standardized,
+    list_tasks,
+    reject_task,
+    show_task,
+    task_inbox,
+)
+from app.intake.spec_parser import parse_spec, SpecParseError
+from app.intake.adhoc_parser import parse_adhoc
+from app.intake.normalizer import display_task
 from tools.log_tools import tail_operator_log
 
 
@@ -107,6 +118,38 @@ def build_parser() -> argparse.ArgumentParser:
     policies = subparsers.add_parser("policies")
     policies_subparsers = policies.add_subparsers(dest="policies_command", required=True)
     policies_subparsers.add_parser("validate")
+
+    # operator ingest <spec_path>
+    parser_ingest = subparsers.add_parser(
+        "ingest",
+        help="Ingest a spec file and create a task",
+    )
+    parser_ingest.add_argument("spec_path", help="Path to markdown spec file")
+    parser_ingest.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
+    parser_ingest.add_argument(
+        "--dry-run", action="store_true", help="Show interpreted task without queuing"
+    )
+
+    # operator do "<goal>"
+    parser_do = subparsers.add_parser(
+        "do",
+        help="Quickly queue a task from plain English",
+    )
+    parser_do.add_argument("goal", help="Plain English task description")
+    parser_do.add_argument(
+        "--project", "-p", help="Override project inference"
+    )
+    parser_do.add_argument(
+        "--agent", "-a", help="Override agent selection"
+    )
+    parser_do.add_argument(
+        "--dry-run", action="store_true", help="Show interpreted task without queuing"
+    )
+    parser_do.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
 
     return parser
 
@@ -592,6 +635,68 @@ def main(argv: list[str] | None = None) -> int:
             result = run_next(task_id)
             print(json.dumps(result, indent=2))
             return 0 if result.get("ok", False) else 1
+
+        if args.command == "ingest":
+            import os as _os
+            # Resolve spec path against the caller's original cwd (not operator dir)
+            original_cwd = _os.environ.get("OPERATOR_CWD") or _os.getcwd()
+            spec_path = args.spec_path
+            if not _os.path.isabs(spec_path):
+                spec_path = _os.path.join(original_cwd, spec_path)
+            try:
+                task = parse_spec(spec_path)
+            except SpecParseError as exc:
+                print(f"operator ingest error: {exc}", file=sys.stderr)
+                return 1
+
+            display_task(task)
+
+            if args.dry_run:
+                print("(dry-run: task not queued)")
+                return 0
+
+            if not args.yes and task.requires_confirmation:
+                try:
+                    answer = input("Proceed? [Y/n] ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nTask cancelled.")
+                    return 1
+                if answer not in ("", "y", "yes"):
+                    print("Task cancelled.")
+                    return 0
+
+            init_db()
+            task_id = create_task_from_standardized(task)
+            print(task_id)
+            return 0
+
+        if args.command == "do":
+            import os as _os
+            # Use caller's original cwd for project inference, not the operator dir
+            cwd = _os.environ.get("OPERATOR_CWD") or _os.getcwd()
+            try:
+                task = parse_adhoc(
+                    args.goal,
+                    cwd,
+                    project_override=getattr(args, "project", None),
+                    agent_override=getattr(args, "agent", None),
+                    dry_run=getattr(args, "dry_run", False),
+                    skip_confirmation=getattr(args, "yes", False),
+                )
+            except ValueError as exc:
+                print(f"operator do error: {exc}", file=sys.stderr)
+                return 1
+            except SystemExit as exc:
+                return int(exc.code) if exc.code is not None else 0
+
+            if getattr(args, "dry_run", False):
+                return 0
+
+            init_db()
+            task_id = create_task_from_standardized(task)
+            print(task_id)
+            return 0
+
     except Exception as exc:
         print(f"operator error: {exc}", file=sys.stderr)
         return 1

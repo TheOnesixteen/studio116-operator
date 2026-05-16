@@ -29,7 +29,7 @@ from app.config import get_settings
 from app.db import transaction
 from app.events import record_event, utc_now
 from app.locks import active_locks, managed_lock
-from app.models import HEALTH_STATUSES, TASK_STATES
+from app.models import HEALTH_STATUSES, TASK_STATES, StandardizedTask
 from app.policies import (
     LIVE_CODEX_DOCS_ONLY_MODE,
     LIVE_CODEX_DOCS_ONLY_TARGETS,
@@ -127,6 +127,116 @@ def create_task(
     record_event("task_created", f"Created task: {title}", task_id=task_id)
     transition_task(task_id, "queued", message="Task queued for Phase 1 scheduler")
     return task_id
+
+
+def create_task_from_standardized(task: StandardizedTask) -> str:
+    """
+    Accept a StandardizedTask from the intake layer and create a DB record.
+
+    Validates the task against the project registry and policies before writing:
+      - project must be registered
+      - agent must be a known worker (codex | claude_code | gemini_cli | shell_ops)
+      - write_intent=True requires agent to be in the project's allowed_write_agents
+      - target_paths must not overlap with blocked_paths
+      - max_changed_files is noted in task metadata
+
+    Returns the new task ID string.
+    Raises ValueError or PermissionError on policy violations.
+    """
+    from fnmatch import fnmatchcase
+    from app.project_registry import get_project
+
+    # --- 1. Validate project ---
+    try:
+        project_data = get_project(task.project)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+
+    # --- 2. Validate agent ---
+    known_agents = {"codex", "claude_code", "gemini_cli", "shell_ops"}
+    if task.agent not in known_agents:
+        raise ValueError(
+            f"Unknown agent: {task.agent!r}. "
+            f"Allowed: {', '.join(sorted(known_agents))}"
+        )
+
+    # --- 3. write_intent requires an allowed write agent ---
+    if task.write_intent:
+        write_policy = project_data.get("write_policy", {})
+        if not isinstance(write_policy, dict) or not write_policy.get("writable"):
+            raise PermissionError(
+                f"Project {task.project!r} has no write policy or is not writable; "
+                f"write_intent=True is not permitted."
+            )
+        allowed_write_agents = write_policy.get("allowed_write_agents", [])
+        if task.agent not in allowed_write_agents:
+            raise PermissionError(
+                f"Agent {task.agent!r} is not in allowed_write_agents for project "
+                f"{task.project!r}. Allowed: {', '.join(allowed_write_agents)}"
+            )
+
+    # --- 4. target_paths must not overlap with blocked_paths ---
+    def _is_blocked(path: str) -> bool:
+        for pattern in task.blocked_paths:
+            if fnmatchcase(path, pattern) or fnmatchcase(path, f"**/{pattern}"):
+                return True
+            # Simple substring check for glob-free blocked paths
+            if "*" not in pattern and pattern in path:
+                return True
+        return False
+
+    blocked_hits = [p for p in task.target_paths if _is_blocked(p)]
+    if blocked_hits:
+        raise PermissionError(
+            f"The following target paths are blocked by policy: {blocked_hits}"
+        )
+
+    # --- 5. Map StandardizedTask.priority (int) to legacy string priority ---
+    if task.priority <= 5:
+        priority_str = "high"
+    elif task.priority <= 15:
+        priority_str = "medium"
+    else:
+        priority_str = "low"
+
+    # --- 6. Build routing and metadata dicts ---
+    routing: dict[str, Any] = {
+        "worker": task.agent,
+        "delegation_mode": task.delegation_mode,
+        "target_paths": task.target_paths,
+        "read_only": task.read_only,
+        "write_intent": task.write_intent,
+        "scope": task.scope,
+        "intake_source": task.source_context.get("entrypoint", "unknown"),
+        "intake_version": "1.0",
+    }
+    metadata: dict[str, Any] = {
+        "source_context": task.source_context,
+        "risk_level": task.risk_level,
+        "normalization_path": task.normalization_path,
+        "routing_reason": task.routing_reason,
+        "normalization_notes": task.normalization_notes,
+        "confidence": task.confidence,
+        "blocked_paths": task.blocked_paths,
+        "origin_directory": task.origin_directory,
+        "max_changed_files": task.max_changed_files,
+        "deployment_allowed": task.deployment_allowed,
+        "requires_gemini_review": task.requires_gemini_review,
+        "requires_human_approval": task.requires_human_approval,
+    }
+
+    return create_task(
+        project=task.project,
+        title=task.title,
+        goal=task.goal,
+        task_type=task.task_type,
+        priority=priority_str,
+        requested_by=task.requested_by,
+        constraints=None,
+        acceptance_criteria=task.acceptance_criteria if task.acceptance_criteria else None,
+        routing=routing,
+        metadata=metadata,
+    )
 
 
 def transition_task(task_id: str, to_status: str, *, message: str | None = None) -> None:
