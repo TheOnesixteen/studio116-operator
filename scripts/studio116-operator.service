@@ -1,0 +1,18 @@
+[Unit]
+Description=Studio 116 Operator
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Projects/studio116-operator
+Environment=OPERATOR_CWD=/root/Projects/studio116-operator
+ExecStart=/root/Projects/studio116-operator/scripts/operator run next
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studio116-operator
+
+[Install]
+WantedBy=multi-user.target
