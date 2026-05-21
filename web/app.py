@@ -51,6 +51,8 @@ def run(cmd):
             cwd="/root/Projects/studio116-operator",
         )
         raw = result.stdout.strip() or result.stderr.strip()
+        if result.returncode != 0:
+            return jsonify({"ok": False, "error": raw}), 400
         try:
             return jsonify({"ok": True, "output": json.loads(raw)})
         except (json.JSONDecodeError, ValueError):
@@ -64,6 +66,64 @@ def run(cmd):
 @app.route("/")
 def index():
     return send_from_directory(WEB_DIR, "index.html")
+
+
+@app.route("/htmx.min.js")
+def htmx_js():
+    return send_from_directory(WEB_DIR, "htmx.min.js")
+
+
+@app.route("/api/inbox")
+def inbox():
+    try:
+        con = _db()
+        rows = con.execute(
+            "SELECT id, project, title, status, routing_json, created_at, updated_at FROM tasks"
+            " WHERE status = 'review' ORDER BY updated_at ASC"
+        ).fetchall()
+
+        result = []
+        for row in rows:
+            t = dict(row)
+            routing = {}
+            try:
+                routing = json.loads(t.get("routing_json") or "{}")
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+            run_row = con.execute(
+                "SELECT id FROM task_runs WHERE task_id = ? ORDER BY started_at DESC LIMIT 1",
+                (t["id"],),
+            ).fetchone()
+            run_id = dict(run_row)["id"] if run_row else ""
+
+            changed_files = []
+            cf_path = Path(ARTIFACTS_DIR) / t["id"] / run_id / "changed_files.json"
+            if cf_path.exists():
+                try:
+                    cf_raw = json.loads(cf_path.read_text(encoding="utf-8"))
+                    raw = cf_raw.get("changed_files", cf_raw) if isinstance(cf_raw, dict) else cf_raw
+                    if isinstance(raw, list):
+                        changed_files = raw
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            result.append({
+                "id": t["id"],
+                "project": t["project"],
+                "title": t["title"],
+                "status": t["status"],
+                "pipeline": routing.get("delegation_mode", ""),
+                "risk_level": _friction_level(routing),
+                "changed_files": changed_files,
+                "created_at": t["created_at"],
+                "updated_at": t["updated_at"],
+            })
+
+        con.close()
+        return jsonify({"ok": True, "review": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/tasks")
