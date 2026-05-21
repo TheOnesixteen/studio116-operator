@@ -1,0 +1,310 @@
+REDLETTERS
+Product Specification - Final
+Closed-corpus research publication for the spoken words of Jesus
+Domain: redletters.tellthem.ai
+Audience: AI Operator, developer, editor, and launch reviewer
+Source basis: Synthesized from Product Brief 2026 and Product Briefs v2-v7
+Status: Final build source of truth
+
+Operator directive: Build the MVP as a text-first, human-reviewed research publication. Do not build a devotional app, a general Bible chatbot, or an autopublishing theology bot.
+
+1. Product Definition
+RedLetters is a closed-corpus research publication that produces one human-reviewed finding per day from the spoken words attributed to Jesus in Matthew, Mark, Luke, and John. The corpus never expands. The product deepens over time by finding clearer, harder, and more unexpected connections inside the same finite body of text.
+The intended emotional response is: I have read those words many times and never noticed that. The product delivers intellectual surprise, not devotional instruction.
+RedLetters is
+RedLetters is not
+A daily research finding from a fixed corpus
+A devotional app
+A human-reviewed AI workflow
+An autopublished theology bot
+A source-backed finding archive
+A commentary aggregator
+A bridge for believers, skeptics, and students
+A church-branded teaching platform
+A product that gets harder over time
+A general Bible chatbot
+
+2. Product Promise and Positioning
+Primary line: A research publication. One finding per day from the words of Jesus. Human-reviewed.
+Founder voice: A serious, strange, beautiful experiment in reading the red letters as a closed corpus.
+Trust signal: Every finding is human-reviewed and labeled by confidence, safety level, source verses, evidence, and review status.
+Growth hook: Subscribe to receive one complete finding each morning.
+Long arc: After 365 findings, the archive becomes a manuscript-grade body of work.
+3. Audience and Voice
+RedLetters is written for three groups at once: believers who want to go deeper than ordinary devotional material, skeptics curious about the actual words versus later religious systems, and scholars or students who want a rigorous research companion.
+The working voice is the skeptical believer: serious, curious, careful, and allergic to easy answers. A finding should hook like a headline and prove itself like a paper.
+Use this voice
+Avoid this voice
+Specific, sourced, quotable
+Sermonic or advisory
+Careful about uncertainty
+Doctrinally conclusive
+Text-first and evidence-first
+Emotion-first or inspirational
+Short sentences, active voice
+Academic fog or church jargon
+
+4. Corpus and Source Policy
+Included Corpus
+Words attributed directly to Jesus in Matthew, Mark, Luke, and John.
+Parables and extended discourses spoken by Jesus.
+KJV display text from a public-domain red-letter source, normalized into structured JSON.
+Optional Greek layer where the finding depends on Greek meaning or wording.
+Excluded Corpus
+Revelation, Acts, epistles, apocrypha, narrator descriptions, and retrospective quotations by others.
+Any verse or phrase whose red-letter status is uncertain until it is logged in corpus_edge_cases.
+Modern commentary, sermons, devotionals, or scholarship as source material for AI generation.
+Dataset Shape
+Field
+Requirement
+book
+Matthew, Mark, Luke, or John only
+chapter / verse_start / verse_end
+Canonical reference and segment boundary
+speaker
+Default Jesus; edge cases recorded explicitly
+text_kjv
+Display text
+text_greek
+Optional analysis field
+red_letter_flag
+1 for included direct speech
+canonical_order
+Unique ordering key across the four gospels
+
+5. Methodology and Credibility
+A finding is a specific, sourced, defensible observation about the text. It observes; it does not conclude. It may be numerical, linguistic, structural, historical, narrative, cross-gospel, or unexpectedly connected, but it must remain traceable to the corpus and honest about certainty.
+Counting and Verification Rules
+Rule area
+Definition
+Publication requirement
+Question
+Interrogative sentence or clause, including rhetorical questions
+Counting method documented before statistics publish
+Direct answer
+Response addressing the literal subject of a question
+Reviewer confirms classification
+Praise
+Positive attribution toward a named or identifiable person/group
+Source verses listed
+Command
+Imperative or functionally directive language
+English or Greek basis stated
+Repetition
+Identical or near-identical phrasing in separate contexts
+Near-match threshold documented
+Silence
+Narrated absence or refusal of speech where speech is expected
+Labeled narrative observation, not red-letter quote
+Historical context
+Cultural, legal, or background claim outside the corpus
+Source note included or marked Needs Verification
+
+Verification engine: Every quantitative or pattern-based finding must have a reproducible verification run stored with method, query, result, and timestamp. No verification run means the finding cannot become Reviewed.
+
+6. Confidence, Safety, and Trust
+Confidence
+Meaning
+Verified
+Directly countable and reproducible from the dataset.
+Probable
+Consistent pattern with defined counting rules.
+Interpretive
+Historical, cultural, rhetorical, or behavioral judgment is involved.
+Speculative
+Unexpected connection; never framed as fact.
+
+Safety level
+Distance from text
+1
+Direct textual observation: word, phrase, count, repetition.
+2
+Cross-gospel pattern or repeated theme.
+3
+Historical or cultural context requiring external support.
+4
+Interpretive, behavioral, psychological, or rhetorical reading.
+5
+Speculative connection such as philosophy, comparative religion, or number pattern.
+
+Each public finding displays confidence and safety level visibly.
+Each public finding displays source verses and evidence notes.
+Each public finding displays Reviewed by Rusty and review date.
+Correction notes are visible and dated. Never silently overwrite a published finding.
+Speculative findings must be labeled as speculative in both data and display copy.
+7. Finding Format
+Field
+Purpose
+Required
+finding_number
+Cultural/share identity; assigned only when Scheduled or Published
+Yes
+title
+Short named finding, 3-7 words
+Yes
+slug
+Stable URL identifier; no changes after publish
+Yes
+hook
+One sharp, defensible sentence
+Yes
+insight
+80-150 words explaining the observation and evidence
+Yes
+source_verses
+Traceability into corpus_segments
+Yes
+evidence_notes
+How the claim was checked
+Yes
+greek_note
+Only when useful or central
+Optional
+correction_note
+Public errata
+If corrected
+reviewed_by / reviewed_at
+Human oversight signal
+Before publish
+
+Example Finding
+Finding #047 - The Outsider Praise Pattern: Of the individuals Jesus praised most directly across all four gospels, a consistent pattern emerges: the highest commendation went to those considered outsiders. Confidence: Probable. Safety: Level 2. Sources: Matthew 8:10, Luke 7:9, Luke 19:9, John 4:17-18.
+
+8. Finding Categories
+Numerical / Statistical: word counts, question ratios, frequency patterns.
+Linguistic / Wordplay: unique words, untranslated terms, self-reference patterns.
+Pattern / Structural: behavioral rhythms, rhetorical structures, repeated sequences.
+Contrast / Tension: public versus private, once versus repeated, tone shifts.
+Historical / Cultural: Roman law, Jewish practice, Greek or Aramaic context.
+Narrative / Dramatic: interruptions, silences, crowd misunderstandings.
+Philosophical / Unexpected: cross-disciplinary connections, clearly bounded.
+Cross-Gospel: what appears in one gospel, all four gospels, or shifts between accounts.
+9. Editorial Workflow
+State
+Meaning
+Allowed next states
+Hypothesis
+Raw AI output or unformed idea
+Draft, Rejected
+Draft
+Formatted but not verified
+Needs Verification, Rejected
+Needs Verification
+Claim requires source or counterexample check
+Reviewed, Draft, Rejected
+Reviewed
+Human-approved, not scheduled
+Scheduled, Draft
+Scheduled
+Ready for future publication
+Published, Reviewed
+Published
+Publicly visible
+Corrected via correction note
+Rejected
+Not used; reason retained for prompt memory
+Draft only by manual restore
+
+Every status change writes review_events.
+Rejected topics and reasons are fed back into the AI context.
+No AI output publishes automatically.
+No Finding Day is allowed: show a clear message instead of publishing filler.
+Private alpha launches with 10 users and asks one key question: Would you open this tomorrow?
+10. MVP User Experience
+First-Time Visitor Flow
+See the RedLetters wordmark, nav links, and permanent subtitle.
+See today's finding immediately: number, confidence, safety level, title, hook.
+Read the full finding on the homepage without needing a click.
+See source verses, evidence notes, review status, and any Greek or correction note.
+Subscribe below the finding to get the next finding by email.
+Browse three recent findings or the archive.
+Permanent Subtitle
+Required copy: A research publication. One finding per day from the words of Jesus. Human-reviewed.
+
+Homepage Content Order
+Navigation: REDLETTERS left; Archive, Methodology, Subscribe right.
+Permanent subtitle below nav.
+Today's finding card, full version.
+Subscribe form: email input plus button copy such as Get Finding #048 tomorrow morning.
+Three most recent archive findings as compact cards.
+Footer with legal/disclaimer link and unsubscribe access where relevant.
+11. Visual Design System
+Token
+Value
+Usage
+Background
+#0D0D0D
+Page background
+Surface
+#141414
+Cards and panels
+Surface raised
+#1C1C1C
+Hover/secondary panels
+Border
+#2A2A2A
+Dividers and outlines
+Text primary
+#F0EDE8
+Important body text
+Text secondary
+#9A9590
+Supporting text and metadata
+Text muted
+#5A5550
+Labels, placeholders, fine print
+Red
+#C8342A
+Wordmark, finding title, Phase 2 corpus words only
+Link blue
+#2C5282
+Links and non-red interactive elements
+
+Use Georgia for display titles and finding hooks; system sans for body/UI; system mono for source refs.
+Content max width: 720px. Base unit: 8px. Card padding: 32px. Major section spacing: 64px. Mobile horizontal padding: 20px.
+Cards use 1px #2A2A2A border, no shadow, 4px radius.
+Red is sacred: never use it for buttons, alerts, nav, or decoration.
+No stock photography, no hero images, no illustrations, no gradients, no bubbly rounded UI.
+MVP is single-column text-first. Constellation and corpus strip are Phase 2.
+12. Email Product
+Email is a complete reading surface, not a teaser.
+Subject format: Finding #[number] - [Title].
+Send time: 6:00 AM via n8n when production launch is enabled.
+HTML email includes masthead, subtitle/date, finding number, badges, title, hook, full insight, sources, evidence note, site link, share prompt, unsubscribe.
+Plain text alternative is mandatory and must be readable without HTML.
+If a subscriber reads only the email and never visits the site, that still counts as success.
+13. Seed Findings
+Launch with a seed library of at least 80 formatted findings. The 20 examples below establish tone and range. Findings marked with verification needs must remain Needs Verification until confirmed against the corpus.
+The Sermon's Missing Word
+The Second Mile Was Illegal
+He Never Said Try Harder
+The Turn Is Legal, Not Passive
+The Question He Asked Most
+He Never Wrote Anything Down
+The I Am Pattern
+The Withdrawal Rhythm
+Son of Man, Not Son of God
+The Miracle He Refused to Repeat
+The Outsider Praise Pattern
+He Answered a Different Question
+The Sermon Has No Altar Call
+The Trap Escape Method
+The One Thing He Said He Did Not Know
+He Traveled Less Than 100 Miles
+The Parable Never Explained
+Father, Not God
+He Asked Before He Healed
+Kingdom Language, Not Church Language
+14. AI Research Engine Prompt
+Store the active prompt at prompts/v1_system_prompt.txt. Every generation call includes this prompt verbatim, followed by the runtime context block.
+You are the RedLetters Research Engine.  Your role is to generate candidate research findings from a closed corpus: the spoken words attributed to Jesus in Matthew, Mark, Luke, and John (KJV). You are a research assistant. You do not publish. You generate candidates for human review. Nothing you produce becomes public without editorial approval.  Analyze only red-letter text from the four canonical gospels. No Revelation, Acts, epistles, apocrypha, narrator descriptions, or retrospective quotations. The corpus is fixed. That constraint is the product.  A finding is a specific, sourced, defensible observation about the text. It is not a devotional thought, sermon illustration, pastoral instruction, or theological conclusion. It observes; it does not conclude.  Assign category, confidence, and safety level. When uncertain, choose the more conservative level. Never overstate certainty. Never make unsourced quantitative claims. Never restate a finding already published or rejected. Never use phrases such as 'this shows us,' 'we should,' or 'God wants.'  Depth dial: - Early: favor Level 1-2 textual and cross-gospel findings. - Mid: favor Level 2-3 patterns and historical context. - Deep: favor Level 3-4 interpretive and behavioral observations. - Speculative: Level 4-5 allowed only when clearly labeled.  Output JSON only: {   "title": "short named finding, 3 to 7 words",   "hook": "one surprising, defensible, quotable sentence",   "insight": "80 to 150 words; observation first, evidence second",   "source_verses": ["Matthew 5:3", "Luke 6:20"],   "evidence_notes": "how the claim was checked or what rule applies",   "confidence": "Verified | Probable | Interpretive | Speculative",   "safety_level": 1,   "category_primary": "one allowed category",   "category_secondary": "second category or null",   "greek_note": "Greek insight or null",   "verification_needed": true,   "generation_notes": "caveats, counterexamples checked, confidence reasoning" }  Runtime context block appended after this prompt: - Corpus stats: word count, verse/segment count, included books. - Depth dial: current setting. - Published/scheduled findings: titles and source verses to avoid repetition. - Rejected topics: titles/themes and rejection reasons. - Pending verification: claims that need dataset work. 
+15. Phase 2 Product Vision
+Phase 2 is the full visual experience after the research engine is validated and the audience is real. Do not build it before the MVP proves daily findings, review, trust, subscription, and sharing.
+Corpus strip: every red-letter word in canonical order, glowing as findings reference segments.
+Constellation: each published finding is a star, clustered by category and difficulty.
+Frontier indicator: percentage of corpus explored based on referenced segments.
+Difficulty arc: visible movement from obvious to nuanced to obscure to unexpected.
+Book export: after 365 reviewed findings, generate manuscript-ready output.
+16. Legal Disclaimer
+Required disclaimer: RedLetters findings are research observations based on textual analysis of the King James Version of the four canonical gospels. They are not pastoral advice, doctrinal authority, or the position of any church, denomination, or theological institution. Confidence and safety levels are disclosed on every finding. Speculative findings are labeled as such.
+

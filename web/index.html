@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studio 116 Operator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --border: #2a2a2a;
+    --text: #e2e2e2;
+    --muted: #666;
+    --accent: #4a9eff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --font: 'Courier New', Courier, monospace;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; }
+
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--bg); z-index: 10;
+  }
+  header h1 { font-size: 15px; font-weight: bold; letter-spacing: 0.05em; color: var(--text); }
+  header .tagline { color: var(--muted); font-size: 11px; margin-left: auto; }
+
+  .health-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .health-dot.ok   { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .health-dot.fail { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px;
+  }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 12px; }
+
+  .row { display: flex; gap: 8px; }
+  input[type="text"] {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--font); font-size: 13px;
+    padding: 7px 10px; border-radius: 4px; outline: none;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+
+  button {
+    background: var(--accent); color: #000; border: none; cursor: pointer;
+    font-family: var(--font); font-size: 12px; font-weight: bold;
+    padding: 7px 14px; border-radius: 4px; white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:hover:not(:disabled) { opacity: 0.85; }
+  button.danger { background: var(--red); color: #fff; }
+
+  .output {
+    margin-top: 10px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px; font-size: 12px; color: var(--text);
+    white-space: pre-wrap; word-break: break-word; min-height: 36px;
+    max-height: 260px; overflow-y: auto; display: none;
+  }
+  .output.visible { display: block; }
+  .output.err { color: var(--red); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--muted); padding: 0 8px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1c1c1c; }
+
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge.done     { background: #1a3a1a; color: var(--green); }
+  .badge.failed   { background: #3a1a1a; color: var(--red); }
+  .badge.canceled { background: #2a2a1a; color: var(--yellow); }
+  .badge.queued   { background: #1a2a3a; color: var(--accent); }
+  .badge.running  { background: #1a2a3a; color: var(--accent); }
+
+  .id-cell { color: var(--muted); font-size: 11px; }
+
+  .footer-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px; color: var(--muted); font-size: 11px;
+  }
+
+  .spinner { display: inline-block; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+  @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="health-dot" id="healthDot"></div>
+  <h1>Studio 116 Operator</h1>
+  <span class="tagline" id="healthLabel">checking...</span>
+</header>
+
+<main>
+
+  <div class="two-col">
+
+    <div class="card">
+      <h2>Submit Task</h2>
+      <div class="row">
+        <input type="text" id="taskInput" placeholder="Plain English task description..." />
+        <button id="submitBtn" onclick="submitTask()">Queue Task</button>
+      </div>
+      <div class="output" id="submitOutput"></div>
+    </div>
+
+    <div class="card">
+      <h2>Run Next</h2>
+      <div class="row">
+        <button id="runBtn" onclick="runNext()" style="flex:1">&#9654; Run Next Task</button>
+      </div>
+      <div class="output" id="runOutput"></div>
+    </div>
+
+  </div>
+
+  <div class="card">
+    <h2>Task Queue</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Project</th>
+          <th>Title</th>
+          <th>ID</th>
+        </tr>
+      </thead>
+      <tbody id="taskTable"><tr><td colspan="4" style="color:var(--muted);padding:12px 8px">Loading...</td></tr></tbody>
+    </table>
+    <div class="footer-row">
+      <span id="taskCount"></span>
+      <span id="lastRefresh"></span>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const BASE = '';
+
+  async function apiFetch(path, opts = {}) {
+    const res = await fetch(BASE + path, opts);
+    return res.json();
+  }
+
+  function fmt(val) {
+    if (typeof val === 'object') return JSON.stringify(val, null, 2);
+    return String(val);
+  }
+
+  function showOutput(el, data, isErr) {
+    el.textContent = isErr ? (data.error || JSON.stringify(data)) : fmt(data.output ?? data);
+    el.className = 'output visible' + (isErr ? ' err' : '');
+  }
+
+  async function submitTask() {
+    const input = document.getElementById('taskInput');
+    const btn = document.getElementById('submitBtn');
+    const out = document.getElementById('submitOutput');
+    const task = input.value.trim();
+    if (!task) return;
+    btn.disabled = true;
+    btn.textContent = 'Queuing...';
+    try {
+      const data = await apiFetch('/api/submit', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({task})
+      });
+      showOutput(out, data, !data.ok);
+      if (data.ok) { input.value = ''; refreshTasks(); }
+    } catch(e) {
+      showOutput(out, {error: e.message}, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Queue Task';
+    }
+  }
+
+  document.getElementById('taskInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitTask();
+  });
+
+  async function runNext() {
+    const btn = document.getElementById('runBtn');
+    const out = document.getElementById('runOutput');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner">&#8635;</span> Running...';
+    try {
+      const data = await apiFetch('/api/run', {method: 'POST'});
+      showOutput(out, data, !data.ok);
+      refreshTasks();
+    } catch(e) {
+      showOutput(out, {error: e.message}, true);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '&#9654; Run Next Task';
+    }
+  }
+
+  function statusBadge(s) {
+    const known = ['done','failed','canceled','queued','running'];
+    const cls = known.includes(s) ? s : 'queued';
+    return `<span class="badge ${cls}">${s}</span>`;
+  }
+
+  async function refreshTasks() {
+    try {
+      const data = await apiFetch('/api/tasks');
+      const tbody = document.getElementById('taskTable');
+      if (!data.ok || !Array.isArray(data.output) || data.output.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted);padding:12px 8px">No tasks found.</td></tr>';
+        document.getElementById('taskCount').textContent = '0 tasks';
+      } else {
+        const rows = data.output.map(t => `
+          <tr>
+            <td>${statusBadge(t.status)}</td>
+            <td>${esc(t.project)}</td>
+            <td>${esc(t.title)}</td>
+            <td class="id-cell">${esc(t.id.slice(0,8))}&hellip;</td>
+          </tr>`).join('');
+        tbody.innerHTML = rows;
+        document.getElementById('taskCount').textContent = `${data.output.length} tasks`;
+      }
+      document.getElementById('lastRefresh').textContent =
+        'refreshed ' + new Date().toLocaleTimeString();
+    } catch(e) {
+      document.getElementById('taskTable').innerHTML =
+        `<tr><td colspan="4" style="color:var(--red);padding:12px 8px">Error: ${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  function esc(s) {
+    return String(s ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  }
+
+  async function refreshHealth() {
+    const dot = document.getElementById('healthDot');
+    const label = document.getElementById('healthLabel');
+    try {
+      const data = await apiFetch('/api/health');
+      const ok = data.ok === true;
+      dot.className = 'health-dot ' + (ok ? 'ok' : 'fail');
+      label.textContent = ok ? 'healthy' : 'degraded';
+    } catch(e) {
+      dot.className = 'health-dot fail';
+      label.textContent = 'unreachable';
+    }
+  }
+
+  refreshTasks();
+  refreshHealth();
+  setInterval(refreshTasks, 10000);
+  setInterval(refreshHealth, 30000);
+</script>
+</body>
+</html>

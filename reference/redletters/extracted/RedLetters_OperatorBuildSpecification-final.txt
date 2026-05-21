@@ -1,0 +1,353 @@
+REDLETTERS
+Operator Build Specification - Final
+Execution-ready MVP plan for The Operator
+Domain: redletters.tellthem.ai
+Stack: Flask, SQLite, Caddy, systemd, n8n, Resend, Anthropic API
+Source basis: Synthesized from Implementation Plans v1-v5 plus final product briefs
+Status: Final operator build source of truth
+
+Operator directive: Build exactly the text-first MVP first. Keep the system simple, testable with curl, and governed by human review. Do not introduce a frontend build system or autopublishing path.
+
+1. Final Architecture
+Layer
+Dev
+Production
+Public frontend
+dev-redletters.tellthem.ai
+redletters.tellthem.ai
+Admin dashboard
+dev-admin.redletters.tellthem.ai
+admin.redletters.tellthem.ai
+API
+dev-api.redletters.tellthem.ai
+api.redletters.tellthem.ai
+Droplet
+Dev DigitalOcean droplet
+Production tellthem.ai droplet
+Reverse proxy
+Caddy
+Caddy
+Framework
+Flask / Python 3.11+
+Flask / Python 3.11+
+Port
+5016
+5016
+Database
+/var/lib/redletters/dev.db
+/var/lib/redletters/prod.db
+Process
+systemd + gunicorn, 2 workers
+systemd + gunicorn, 2 workers
+Email
+Resend sandbox
+Resend production
+Scheduler
+Manual + n8n dev workflow
+n8n production workflows
+Deploy
+deploy-redletters
+deploy-redletters --prod
+
+2. DNS Plan
+Record
+Points to
+Auth
+Create when
+dev-redletters.tellthem.ai
+Dev droplet IP
+Caddy Basic Auth
+Phase 0
+dev-admin.redletters.tellthem.ai
+Dev droplet IP
+Caddy Basic Auth + Flask session
+Phase 0
+dev-api.redletters.tellthem.ai
+Dev droplet IP
+Token on write routes
+Phase 0
+redletters.tellthem.ai
+Production droplet IP
+Public
+Phase 12
+admin.redletters.tellthem.ai
+Production droplet IP
+Caddy Basic Auth + Flask session
+Phase 12
+api.redletters.tellthem.ai
+Production droplet IP
+Token on write routes
+Phase 12
+findings@redletters.tellthem.ai
+Resend DNS records
+N/A
+Phase 8
+
+3. Repository Structure
+redletters/   app/     __init__.py          # create_app()     config.py            # env var loading + fail-fast validation     routes_public.py     # /, /finding/<n>/<slug>, /archive, /methodology, /subscribe     routes_admin.py      # /admin/*, login, dashboard, findings, corpus, generation     routes_api.py        # /api/v1/health, /api/v1/findings/today, /api/v1/jobs/*     auth.py              # Flask session + X-N8N-Token checks     db.py                # SQLite context + migration runner     models.py            # findings, sources, events, subscribers     ai_worker.py         # Anthropic call, context assembly, JSON parsing     emailer.py           # Resend REST, HTML/plain text rendering, send logs     corpus_loader.py     # KJV JSON validation and load     share_cards.py       # Pillow OG and portrait cards     templates/       base.html       public/index.html       public/finding.html       public/archive.html       public/methodology.html       admin/login.html       admin/dashboard.html       admin/finding_list.html       admin/finding_edit.html       admin/corpus.html       admin/generation.html       email/finding_email.html       email/finding_email.txt     static/css/main.css     static/js/main.js     static/share/   data/source/   data/kjv_redletters.json   data/greek_index.json   data/seed_findings.json   migrations/001_initial_schema.sql   prompts/v1_system_prompt.txt   scripts/init_db.py   scripts/load_corpus.py   scripts/import_seeds.py   scripts/generate_candidate.py   scripts/verify_finding.py   scripts/backup_db.sh   scripts/deploy-redletters   tests/ 
+4. Environment Variables
+APP_ENV=dev SECRET_KEY= DATABASE_PATH=/var/lib/redletters/dev.db BASE_PUBLIC_URL=https://dev-redletters.tellthem.ai BASE_ADMIN_URL=https://dev-admin.redletters.tellthem.ai BASE_API_URL=https://dev-api.redletters.tellthem.ai ANTHROPIC_API_KEY= ANTHROPIC_MODEL=claude-sonnet-4-20250514 ADMIN_USERNAME=rusty ADMIN_PASSWORD_HASH= N8N_SHARED_TOKEN= RESEND_API_KEY= RESEND_FROM_ADDRESS=findings@redletters.tellthem.ai DEV_BASIC_AUTH_USER=redletters DEV_BASIC_AUTH_PASS_HASH= 
+5. Database Schema
+Create migrations/001_initial_schema.sql with the following MVP tables. Every migration must be idempotent.
+Table
+Purpose
+Required controls
+corpus_segments
+Canonical red-letter corpus rows
+Only Matthew, Mark, Luke, John; unique canonical_order
+corpus_edge_cases
+Document uncertain inclusion decisions
+No silent red-letter decisions
+findings
+Primary content object
+Confidence, safety, status checks; no public draft leakage
+finding_sources
+Verse-level traceability
+References corpus_segments where possible
+review_events
+Audit trail
+Written on every status change
+generation_logs
+AI call record
+Raw prompt and raw output stored before parsing
+verification_runs
+Reproducible proof for counts/patterns
+Required before Reviewed for quantitative/pattern findings
+subscribers
+Email list
+Unique email, unsubscribe_token
+email_sends
+Per-subscriber delivery log
+Sent and failed states logged
+correction_notes
+Public errata
+No silent overwrite after publish
+settings
+Runtime config
+active_prompt_version, depth_dial, launch_mode, corpus_loaded
+
+Required SQL Shape
+CREATE TABLE IF NOT EXISTS corpus_segments (   id INTEGER PRIMARY KEY AUTOINCREMENT,   book TEXT NOT NULL CHECK(book IN ('Matthew','Mark','Luke','John')),   chapter INTEGER NOT NULL,   verse_start INTEGER NOT NULL,   verse_end INTEGER,   speaker TEXT DEFAULT 'Jesus',   text_kjv TEXT NOT NULL,   text_greek TEXT,   red_letter_flag INTEGER DEFAULT 1,   canonical_order INTEGER NOT NULL UNIQUE,   created_at TEXT DEFAULT (datetime('now')) );  CREATE TABLE IF NOT EXISTS corpus_edge_cases (   id INTEGER PRIMARY KEY AUTOINCREMENT,   verse_ref TEXT NOT NULL,   decision TEXT NOT NULL,   reason TEXT NOT NULL,   created_at TEXT DEFAULT (datetime('now')) );  CREATE TABLE IF NOT EXISTS findings (   id INTEGER PRIMARY KEY AUTOINCREMENT,   finding_number INTEGER UNIQUE,   title TEXT NOT NULL,   slug TEXT UNIQUE NOT NULL,   hook TEXT NOT NULL,   insight TEXT NOT NULL,   evidence_notes TEXT NOT NULL,   greek_note TEXT,   confidence TEXT NOT NULL CHECK(confidence IN ('Verified','Probable','Interpretive','Speculative')),   safety_level INTEGER NOT NULL CHECK(safety_level BETWEEN 1 AND 5),   status TEXT NOT NULL DEFAULT 'Hypothesis'     CHECK(status IN ('Hypothesis','Draft','Needs Verification','Reviewed','Scheduled','Published','Rejected')),   category_primary TEXT NOT NULL,   category_secondary TEXT,   difficulty_label TEXT CHECK(difficulty_label IN ('Early','Mid','Deep','Speculative') OR difficulty_label IS NULL),   reviewed_by TEXT,   reviewed_at TEXT,   published_at TEXT,   scheduled_at TEXT,   created_at TEXT DEFAULT (datetime('now')),   updated_at TEXT DEFAULT (datetime('now')) );  CREATE TABLE IF NOT EXISTS finding_sources (   id INTEGER PRIMARY KEY AUTOINCREMENT,   finding_id INTEGER NOT NULL REFERENCES findings(id),   corpus_segment_id INTEGER REFERENCES corpus_segments(id),   verse_ref TEXT NOT NULL,   note TEXT );  CREATE TABLE IF NOT EXISTS review_events (   id INTEGER PRIMARY KEY AUTOINCREMENT,   finding_id INTEGER NOT NULL REFERENCES findings(id),   reviewer TEXT DEFAULT 'Rusty',   from_status TEXT NOT NULL,   to_status TEXT NOT NULL,   notes TEXT,   created_at TEXT DEFAULT (datetime('now')) );  CREATE TABLE IF NOT EXISTS verification_runs (   id INTEGER PRIMARY KEY AUTOINCREMENT,   finding_id INTEGER NOT NULL REFERENCES findings(id),   method TEXT NOT NULL,   query TEXT NOT NULL,   result_json TEXT NOT NULL,   verified_by TEXT DEFAULT 'Rusty',   created_at TEXT DEFAULT (datetime('now')) );  CREATE TABLE IF NOT EXISTS generation_logs (   id INTEGER PRIMARY KEY AUTOINCREMENT,   finding_id INTEGER REFERENCES findings(id),   prompt_version TEXT NOT NULL,   model_name TEXT NOT NULL,   raw_prompt TEXT NOT NULL,   raw_output TEXT NOT NULL,   parse_success INTEGER DEFAULT 0,   error TEXT,   created_at TEXT DEFAULT (datetime('now')) );  CREATE TABLE IF NOT EXISTS subscribers (   id INTEGER PRIMARY KEY AUTOINCREMENT,   email TEXT UNIQUE NOT NULL,   status TEXT DEFAULT 'active' CHECK(status IN ('active','unsubscribed')),   source TEXT,   unsubscribe_token TEXT UNIQUE NOT NULL,   subscribed_at TEXT DEFAULT (datetime('now')),   unsubscribed_at TEXT );  CREATE TABLE IF NOT EXISTS email_sends (   id INTEGER PRIMARY KEY AUTOINCREMENT,   subscriber_id INTEGER NOT NULL REFERENCES subscribers(id),   finding_id INTEGER NOT NULL REFERENCES findings(id),   status TEXT DEFAULT 'pending' CHECK(status IN ('pending','sent','failed')),   sent_at TEXT,   error TEXT,   resend_id TEXT );  CREATE TABLE IF NOT EXISTS correction_notes (   id INTEGER PRIMARY KEY AUTOINCREMENT,   finding_id INTEGER NOT NULL REFERENCES findings(id),   note TEXT NOT NULL,   corrected_at TEXT DEFAULT (datetime('now')) );  CREATE TABLE IF NOT EXISTS settings (   key TEXT PRIMARY KEY,   value TEXT,   updated_at TEXT DEFAULT (datetime('now')) ); 
+Key Status Rules
+Public routes only show status Published with published_at less than or equal to now.
+Draft, Hypothesis, Needs Verification, Reviewed, Scheduled, and Rejected return 404 publicly.
+finding_number is assigned only at Scheduled or Published.
+slug is stable after Published.
+Reviewed requires title, hook, insight, sources, evidence_notes, confidence, safety_level, review fields, and verification where applicable.
+6. Caddy and systemd
+Dev Caddy
+dev-redletters.tellthem.ai {     basicauth {         {$DEV_BASIC_AUTH_USER} {$DEV_BASIC_AUTH_PASS_HASH}     }     reverse_proxy 127.0.0.1:5016     log { output file /var/log/redletters/caddy-dev-public.log } }  dev-admin.redletters.tellthem.ai {     basicauth {         {$DEV_BASIC_AUTH_USER} {$DEV_BASIC_AUTH_PASS_HASH}     }     reverse_proxy 127.0.0.1:5016     log { output file /var/log/redletters/caddy-dev-admin.log } }  dev-api.redletters.tellthem.ai {     reverse_proxy 127.0.0.1:5016     log { output file /var/log/redletters/caddy-dev-api.log } } 
+Production Caddy
+redletters.tellthem.ai {     reverse_proxy 127.0.0.1:5016     log { output file /var/log/redletters/caddy-public.log } }  admin.redletters.tellthem.ai {     basicauth {         {$ADMIN_USERNAME} {$ADMIN_PASSWORD_HASH}     }     reverse_proxy 127.0.0.1:5016     log { output file /var/log/redletters/caddy-admin.log } }  api.redletters.tellthem.ai {     reverse_proxy 127.0.0.1:5016     log { output file /var/log/redletters/caddy-api.log } } 
+systemd
+[Unit] Description=RedLetters Flask App After=network.target  [Service] User=www-data WorkingDirectory=/opt/redletters EnvironmentFile=/etc/redletters/redletters.env ExecStart=/opt/redletters/venv/bin/gunicorn \     --workers 2 \     --bind 127.0.0.1:5016 \     --log-file /var/log/redletters/gunicorn.log \     --access-logfile /var/log/redletters/access.log \     'app:create_app()' Restart=always RestartSec=5  [Install] WantedBy=multi-user.target 
+7. API Contract
+Route
+Method
+Auth
+Behavior
+/health
+GET
+Public/dev auth via Caddy
+Returns app_env, db_status, corpus_count, version, timestamp
+/api/v1/status
+GET
+Public
+Returns status ok
+/api/v1/findings/today
+GET
+Public
+Returns today's published finding or no-finding payload
+/api/v1/jobs/generate-candidate
+POST
+X-N8N-Token
+Creates Draft/Hypothesis only and logs generation
+/api/v1/jobs/send-daily
+POST
+X-N8N-Token
+Sends today's published finding to active subscribers
+
+8. CSS Design Tokens
+:root {   --bg: #0D0D0D;   --surface: #141414;   --surface-up: #1C1C1C;   --border: #2A2A2A;   --text: #F0EDE8;   --text-sub: #9A9590;   --text-muted: #5A5550;   --red: #C8342A;   --red-glow: rgba(200, 52, 42, 0.15);   --link: #2C5282;   --badge-verified: #2D6A4F;   --badge-probable: #7D5A1E;   --badge-interpretive: #5A3A1E;   --badge-speculative: #5A2D0C;   --level-1: #1A3A2A;   --level-2: #1A2A3A;   --level-3: #2A2A1A;   --level-4: #3A1A2A;   --level-5: #3A1A1A;   --font-serif: Georgia, 'Times New Roman', serif;   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;   --font-mono: 'SF Mono', 'Fira Code', Consolas, monospace;   --unit: 8px;   --card-pad: 32px;   --max-width: 720px;   --gap-section: 64px; } 
+No hard-coded hex values outside the token layer unless explicitly justified.
+Red is used only for the wordmark, finding titles, and Phase 2 corpus words.
+MVP uses vanilla HTML, CSS, JavaScript, and Jinja2 only.
+9. n8n Workflows
+Workflow
+Trigger
+Steps
+Launch state
+Generate Candidate - Dev
+Manual
+POST dev generate-candidate; notify Rusty with admin link; alert on failure
+Active in dev
+Generate Candidate - Prod
+Daily midnight
+POST prod generate-candidate; writes Draft/Hypothesis only; notify Rusty
+Paused until launch
+Daily Email - Prod
+6:00 AM
+GET today's finding; if none, notify and skip; POST send-daily; report send count
+Paused until launch approved
+Failure Alert
+HTTP error
+Send endpoint, status code, and truncated response body to Rusty
+Active before prod launch
+
+10. Backup, Deploy, and Rollback
+Backup Script
+#!/bin/bash DB_PATH="${DATABASE_PATH}" BACKUP_DIR="/var/backups/redletters" TIMESTAMP=$(date +%Y%m%d_%H%M%S) ENV="${APP_ENV:-dev}" BACKUP_FILE="$BACKUP_DIR/redletters_${ENV}_${TIMESTAMP}.db"  mkdir -p $BACKUP_DIR sqlite3 $DB_PATH ".backup $BACKUP_FILE" echo "Backup: $BACKUP_FILE" ls -t $BACKUP_DIR/*.db | tail -n +15 | xargs -r rm echo "Rotation complete." 
+Production cron: 0 2 * * * /opt/redletters/scripts/backup_db.sh >> /var/log/redletters/backup.log 2>&1
+Restore test before launch: restore latest backup to /tmp/restore_test.db and compare row counts.
+deploy-redletters always backs up database, pulls Git, installs requirements, runs migrations, restarts systemd, and checks health.
+Rollback: stop service, checkout prior tag, restore pre-migration backup if schema changed, restart, verify /health.
+11. Phase Build Checklist
+Phase 0 - Preflight
+Confirm dev droplet SSH/sudo, Python 3.11+, Caddy, disk space, and no port 5016 conflict.
+Create private GitHub repo github.com/TheOnesixteen/redletters.
+Create six DNS records and Resend DNS records.
+Generate SECRET_KEY, N8N_SHARED_TOKEN per environment, admin bcrypt hash, and Caddy Basic Auth hash.
+Confirm Anthropic API key, Resend account, n8n access, and production droplet hostname.
+Phase 1 - Dev Droplet Setup
+Create /opt/redletters, /var/lib/redletters, /var/log/redletters, /etc/redletters, /var/backups/redletters.
+Clone repo, create venv, install requirements, create dev env file.
+Run minimal health app on 127.0.0.1:5016.
+Install systemd service, add Caddy snippets, verify HTTPS /health.
+Tag v0.1-scaffold.
+Phase 2 - Flask Scaffold
+Create application factory, config, db, auth, public/admin/api blueprints.
+Add /health and /api/v1/status.
+Add admin login and dashboard shell.
+Create base template with nav, subtitle, footer, CSS variables.
+Configure rotating logging. Tag v0.2-scaffold-complete.
+Phase 3 - Database and Corpus
+Create migration and idempotent init_db.py.
+Download and normalize KJV red-letter JSON into data/kjv_redletters.json.
+Load only Matthew, Mark, Luke, John; confirm Revelation and epistles absent.
+Store corpus stats and show admin corpus page.
+Run tests/test_corpus.py. Tag v0.3-corpus-loaded.
+Phase 4 - Findings Admin and Review
+Implement CRUD, source lookup, slug generation, status transitions, review_events.
+Build admin list, create/edit form, review actions, validation messages.
+Block public visibility unless Published and published_at <= now.
+Build public finding detail and archive.
+Run tests/test_findings.py. Tag v0.4-admin-review.
+Phase 5 - Seed Library Import
+Create data/seed_findings.json with 80+ findings.
+Import as Draft or Needs Verification only.
+Reject missing sources, unsupported confidence, duplicates, and missing insight.
+Verify quantitative claims with scripts/verify_finding.py.
+Schedule 10-20 verified alpha findings. Tag v0.5-seeds-imported.
+Phase 6 - AI Candidate Generation
+Copy final system prompt into prompts/v1_system_prompt.txt.
+Implement ai_worker.py with context: corpus stats, published titles, rejected topics, depth dial.
+Log raw prompt/output before parsing.
+Parse JSON; on failure create no finding and store failure in generation_logs.
+Add admin Generate Candidate Now and token-protected API job. Tag v0.6-ai-worker.
+Phase 7 - n8n Scheduling
+Create and test dev Generate Candidate workflow.
+Test bad token, API timeout, malformed response, and failure alert.
+Create production workflow structure but keep paused.
+Tag v0.7-n8n-wired.
+Phase 8 - Email Capture and Delivery
+Confirm Resend DNS.
+Implement subscribe, duplicate prevention, unsubscribe token and route.
+Build HTML and plain text full-finding email templates.
+Implement admin test-send and send-daily API endpoint.
+Log email_sends for every subscriber. Tag v0.8-email.
+Phase 9 - Public Frontend
+Homepage shows today's full finding, permanent subtitle, subscribe form, three recent archive cards.
+Archive filters by category, confidence, safety, and date.
+Methodology explains corpus, counting rules, confidence, and safety levels.
+Finding detail includes all evidence, review status, correction notes, and OG meta.
+Mobile readable at 375px. No constellation or corpus strip. Tag v0.9-frontend.
+Phase 10 - Share Cards
+Generate 1200x630 OG card and 1080x1350 portrait card with Pillow on publish.
+Use stable app/static/share/finding_<number>.png names.
+Add copy-link/download share controls.
+Confirm cards exist for all scheduled/published launch findings. Tag v1.0-share-cards.
+Phase 11 - Testing and Acceptance
+Run corpus, findings, routes, email, auth, backup, and service restart tests.
+Test all public routes, admin auth, API auth, draft invisibility, review audit trail, AI non-publish path.
+Test no-finding-day response.
+Confirm red token usage with CSS scan and visual review.
+Phase 12 - Production Preparation
+Tag v1.0-rc1 and run full acceptance on dev.
+Create production directories/env, clone repo, install requirements.
+Run migrations, load corpus, import verified seed findings.
+Install systemd, add Caddy, create DNS, verify SSL.
+Run smoke tests and backup restore test. Keep prod n8n paused.
+Phase 13 - Launch
+Publish methodology page.
+Schedule 10-20 verified findings and set today's finding.
+Enable subscriber capture and send internal test email.
+Enable daily generation workflow to Draft only.
+Enable daily email workflow after final approval.
+Monitor logs for 72 hours and collect feedback from 10 alpha users.
+12. Required Tests
+Area
+Pass condition
+Corpus
+Four gospels loaded; excluded books absent; all rows have required fields.
+Public site
+Homepage shows only Published finding; non-public statuses return 404.
+Admin auth
+Unauthenticated admin requests require login.
+API auth
+POST job endpoints without token return 403.
+Review workflow
+Every state change creates review_events row.
+Verification
+Reviewed blocked for quantitative/pattern findings lacking verification_runs.
+AI generation
+AI output creates Draft/Hypothesis only; malformed output logged without crash.
+Email
+Subscribe, duplicate handling, test send, unsubscribe, email_sends logging all work.
+SEO/share
+Finding detail has og:title, og:description, og:image.
+Backup
+Backup created and restore tested with matching row counts.
+Service
+systemctl restart redletters passes health check within 10 seconds.
+Visual token
+Red is used only for wordmark, finding titles, and Phase 2 corpus words.
+
+13. AI Agent Rules
+Never publish any finding automatically.
+Never overwrite production database without a confirmed backup first.
+Never commit secrets, API keys, or passwords.
+Never change port 5016 without updating systemd, Caddy, docs, and tests.
+Never introduce a frontend build system for MVP.
+Never use a framework other than Flask without explicit approval.
+Every route must be testable with curl.
+Every database migration must be versioned and idempotent.
+Every AI output must be written to generation_logs before parsing or transformation.
+Every quantitative or pattern-based claim must have a verification run before Reviewed.
+Every public finding must display confidence, safety level, source verses, evidence, and review status.
+Every status change must write review_events.
+Red (#C8342A) is used only for the wordmark, finding titles, and Phase 2 corpus words.
+14. Definition of Done
+redletters.tellthem.ai loads over HTTPS and shows today's published finding.
+Permanent subtitle is visible below nav.
+admin.redletters.tellthem.ai requires Caddy Basic Auth and Flask session login.
+api.redletters.tellthem.ai /health returns OK and write routes require token.
+At least 10 verified findings are Published with numbers assigned.
+Draft, Hypothesis, Needs Verification, Reviewed, Scheduled, and Rejected findings are not public.
+Subscriber signup, duplicate handling, unsubscribe, and test email work and are logged.
+AI generation creates Draft/Hypothesis with generation_log and never Published.
+Daily n8n generation and email workflows are configured, tested, and only enabled at launch approval.
+Backup script creates a file and restore has been tested.
+Methodology page explains corpus, counting rules, confidence, safety, and disclaimer.
+Share cards exist for every Published finding.
+deploy-redletters --prod completes without manual SSH steps.
+No-finding-day behavior is implemented.
+All Phase 11 acceptance tests pass.
+15. Phase 2 Roadmap
+Corpus strip with word/segment illumination.
+Constellation map with finding stars clustered by category and difficulty.
+Frontier indicator based on referenced corpus segments.
+Difficulty arc visualization across time.
+Embeddings-based duplicate detection.
+Public API after archive is substantial.
+Book export after 365 reviewed findings.
+Extended research notes with counterarguments and source detail.

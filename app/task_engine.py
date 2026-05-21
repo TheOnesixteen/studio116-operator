@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from adapters.base import worker_packet
-from adapters.claude_code import intended_read_only_command as intended_claude_read_only_command
+from adapters.claude_code import (
+    intended_read_only_command as intended_claude_read_only_command,
+    run_read_only as run_claude_read_only,
+)
 from adapters.codex import (
     intended_dry_run_command,
     live_docs_only_command,
@@ -21,8 +24,12 @@ from adapters.codex import (
     run_live_policy_file as run_codex_live_policy_file,
     run_live_scaffold_only,
     run_live_tests_only,
+    run_pipeline_codex,
 )
-from adapters.gemini_cli import intended_review_command as intended_gemini_review_command
+from adapters.gemini_cli import (
+    intended_review_command as intended_gemini_review_command,
+    run_review as run_gemini_review,
+)
 from app.artifact_store import write_json_artifact
 from app.artifact_store import write_text_artifact
 from app.config import get_settings
@@ -1372,6 +1379,204 @@ def run_live_codex_model_file(task: dict[str, Any], run_id: str) -> dict[str, An
 
 def run_live_codex_scaffold_only(task: dict[str, Any], run_id: str) -> dict[str, Any]:
     return _run_live_codex_policy_task(task, run_id, mode=LIVE_CODEX_SCAFFOLD_ONLY_MODE)
+
+
+def run_sequential_pipeline(task: dict[str, Any], run_id: str) -> dict[str, Any]:
+    routing = _task_json(task, "routing_json", {})
+    constraints = _task_json(task, "constraints_json", [])
+    agent1 = routing.get("agent1", "claude_code")
+    target_paths = routing.get("target_paths") or LIVE_CODEX_DOCS_ONLY_TARGETS
+    if isinstance(target_paths, str):
+        target_paths = [target_paths]
+
+    settings = get_settings()
+    branch_name = delegated_branch_name(task_id=task["id"], worker="codex", title=task["title"])
+    worktree_path = delegated_worktree_path(task_id=task["id"], worker="codex")
+
+    worktree_result = create_worktree(
+        repo_path=settings.repo_root,
+        worktree_path=worktree_path,
+        branch_name=branch_name,
+    )
+    record_worker_execution(run_id, "shell_ops", worktree_result)
+    if worktree_result.exit_code != 0 and not worktree_path.exists():
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": "Sequential pipeline: worktree creation failed",
+            "key_findings": [worktree_result.stderr or "git worktree add failed"],
+        }
+    update_run_workspace(run_id, worktree_path=str(worktree_path), branch_name=branch_name)
+
+    packet_path = _artifact_path_for(task["id"], run_id, "worker_packet.json")
+    packet = worker_packet(
+        worker="codex",
+        task=task,
+        run_id=run_id,
+        mode="sequential_pipeline",
+        allowed_actions=["inspect_files", "draft_patches", "run_tests"],
+        constraints=[
+            *constraints,
+            "Sequential pipeline: agent1 plans, agent2 (Codex) implements",
+            f"Modify only these target path(s): {', '.join(target_paths)}",
+            "Do not install packages",
+            "Do not use network-dependent work",
+            "Do not commit, merge, or push",
+        ],
+        branch_name=branch_name,
+        worktree_path=worktree_path,
+        read_only=False,
+    )
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="worker_packet",
+        label="Sequential pipeline worker packet",
+        filename="worker_packet.json",
+        data={**packet, "target_paths": target_paths},
+    )
+
+    if agent1 == "gemini_cli":
+        agent1_result = run_gemini_review(task, run_id, worktree_path, packet_path)
+    else:
+        agent1_result = run_claude_read_only(task, run_id, worktree_path, packet_path)
+    record_worker_execution(run_id, agent1, agent1_result)
+    context_path = worktree_path / "pipeline_context.txt"
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="pipeline_agent1_result",
+        label=f"Sequential pipeline agent1 ({agent1}) result",
+        filename="agent1_result.json",
+        data={
+            "agent": agent1,
+            "exit_code": agent1_result.exit_code,
+            "stdout": agent1_result.stdout,
+            "stderr": agent1_result.stderr,
+            "timed_out": agent1_result.timed_out,
+            "context_written": context_path.exists(),
+        },
+    )
+
+    if agent1_result.timed_out:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": f"Sequential pipeline: agent1 ({agent1}) timed out",
+            "key_findings": [f"Agent1 {agent1} timed out; Codex was not launched"],
+        }
+    if agent1_result.exit_code != 0:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": f"Sequential pipeline: agent1 ({agent1}) failed with exit code {agent1_result.exit_code}",
+            "key_findings": [agent1_result.stderr or f"Agent1 {agent1} returned nonzero exit code"],
+        }
+
+    context_text = context_path.read_text(encoding="utf-8") if context_path.exists() else ""
+    packet_path.write_text(
+        json.dumps(
+            {**packet, "target_paths": target_paths, "pipeline_context": context_text},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    base_head_result = git_head(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", base_head_result)
+
+    codex_result = run_pipeline_codex(
+        worktree_path=worktree_path,
+        packet_path=packet_path,
+        timeout_seconds=LIVE_CODEX_TIMEOUT_SECONDS,
+    )
+    record_worker_execution(run_id, "codex", codex_result)
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="worker_result",
+        label="Sequential pipeline Codex worker result",
+        filename="worker_result.json",
+        data={
+            "timed_out": codex_result.timed_out,
+            "exit_code": codex_result.exit_code,
+            "stdout": codex_result.stdout,
+            "stderr": codex_result.stderr,
+            "command": codex_result.command,
+        },
+    )
+
+    if codex_result.timed_out:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": "Sequential pipeline: Codex execution timed out",
+            "key_findings": ["codex_timed_out", f"worktree preserved at {worktree_path}"],
+        }
+    if codex_result.exit_code != 0:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": f"Sequential pipeline: Codex failed with exit code {codex_result.exit_code}",
+            "key_findings": [codex_result.stderr or "Codex returned nonzero exit code"],
+        }
+
+    diff_result = git_diff(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", diff_result)
+    changed_result = git_changed_files(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", changed_result)
+    current_head_result = git_head(worktree_path=worktree_path)
+    record_worker_execution(run_id, "shell_ops", current_head_result)
+    changed_files = [line.strip() for line in changed_result.stdout.splitlines() if line.strip()]
+
+    write_text_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="git_diff",
+        label="Sequential pipeline git diff",
+        filename="git_diff.patch",
+        content=diff_result.stdout,
+    )
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="changed_files",
+        label="Sequential pipeline changed files",
+        filename="changed_files.json",
+        data={"changed_files": changed_files},
+    )
+    write_json_artifact(
+        task_id=task["id"],
+        run_id=run_id,
+        artifact_type="review_summary",
+        label="Sequential pipeline review summary",
+        filename="review_summary.json",
+        data={
+            "summary": "Sequential pipeline task is ready for Rusty review",
+            "agent1": agent1,
+            "agent2": "codex",
+            "requires_approval": True,
+            "worktree_path": str(worktree_path),
+            "branch_name": branch_name,
+            "changed_files": changed_files,
+        },
+    )
+
+    if not changed_files:
+        return {
+            "overall_status": "failed",
+            "task_succeeded": False,
+            "summary": "Sequential pipeline: Codex produced no changes",
+            "key_findings": ["codex_produced_no_changes"],
+        }
+
+    return {
+        "overall_status": "ok",
+        "task_succeeded": True,
+        "stop_in_review": True,
+        "summary": "Sequential pipeline task is ready for Rusty review",
+        "key_findings": [f"Agent1 ({agent1}) planned; Codex diff requires Rusty approval"],
+    }
 
 
 def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str) -> dict[str, Any]:

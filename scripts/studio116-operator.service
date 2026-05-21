@@ -8,8 +8,7 @@ User=root
 WorkingDirectory=/root/Projects/studio116-operator
 Environment=OPERATOR_CWD=/root/Projects/studio116-operator
 ExecStart=/root/Projects/studio116-operator/scripts/operator run next
-Restart=on-failure
-RestartSec=10
+Restart=no
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=studio116-operator

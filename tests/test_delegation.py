@@ -100,7 +100,8 @@ class DelegationDryRunTests(unittest.TestCase):
         self.assertTrue(packet["read_only"])
         self.assertIsNone(packet["worktree_path"])
         self.assertIn("delegate_read_only", packet["allowed_actions"])
-        self.assertIn("116studio-ai --read-only", intended["command"])
+        self.assertIn("claude -p", intended["command"])
+        self.assertIn("--dangerously-skip-permissions", intended["command"])
         create_worktree.assert_not_called()
 
     def test_gemini_dry_run_is_read_only_and_does_not_create_worktree(self):
