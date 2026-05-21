@@ -1,13 +1,44 @@
 import json
-import subprocess
-from flask import Flask, jsonify, request, send_from_directory
 import os
+import sqlite3 as _sqlite3
+import subprocess
+from pathlib import Path
+
+import yaml
+from flask import Flask, jsonify, request, send_from_directory
 
 app = Flask(__name__)
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(WEB_DIR)
+RUNTIME_DIR = os.environ.get("OPERATOR_RUNTIME_DIR", os.path.join(PROJECT_ROOT, "runtime"))
+DB_PATH = os.environ.get("OPERATOR_DB_PATH", os.path.join(RUNTIME_DIR, "operator.db"))
+ARTIFACTS_DIR = os.path.join(RUNTIME_DIR, "artifacts")
 
 OPERATOR = "./scripts/operator"
 TIMEOUT = 60
+
+
+def _db():
+    con = _sqlite3.connect(DB_PATH)
+    con.row_factory = _sqlite3.Row
+    return con
+
+
+def _friction_level(routing):
+    mode = routing.get("delegation_mode", "")
+    if mode in ("live_codex_docs_only", "live_codex_scaffold_only"):
+        return "low"
+    if mode in ("live_codex_tests_only", "live_codex_model_file_only", "live_codex_policy_file_only"):
+        return "medium"
+    if mode == "sequential_pipeline":
+        target_paths = routing.get("target_paths", [])
+        doc_exts = {".md", ".txt", ".yaml", ".yml", ".rst"}
+        if not target_paths or all(
+            any(str(p).endswith(ext) for ext in doc_exts) for p in target_paths
+        ):
+            return "low"
+        return "medium"
+    return "high"
 
 
 def run(cmd):
@@ -75,6 +106,128 @@ def status():
 @app.route("/api/run", methods=["POST"])
 def run_next():
     return run([OPERATOR, "run", "next"])
+
+
+@app.route("/api/tasks/<task_id>/review-packet")
+def review_packet(task_id):
+    try:
+        con = _db()
+        task = con.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not task:
+            con.close()
+            return jsonify({"ok": False, "error": "task not found"}), 404
+        task = dict(task)
+        if task["status"] != "review":
+            con.close()
+            return jsonify({"ok": False, "error": f"task is not in review status (current: {task['status']})"}), 400
+        run_row = con.execute(
+            "SELECT * FROM task_runs WHERE task_id = ? ORDER BY started_at DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        con.close()
+
+        run_row = dict(run_row) if run_row else {}
+        run_id = run_row.get("id", "")
+        artifact_dir = Path(ARTIFACTS_DIR) / task_id / run_id
+
+        routing = {}
+        try:
+            routing = json.loads(task.get("routing_json") or "{}")
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        pipeline = {
+            "delegation_mode": routing.get("delegation_mode", ""),
+            "agent1": routing.get("agent1"),
+            "agent2": routing.get("agent2"),
+            "target_paths": routing.get("target_paths", []),
+        }
+
+        plan_text = None
+        agent1_path = artifact_dir / "agent1_result.json"
+        if agent1_path.exists():
+            try:
+                a1 = json.loads(agent1_path.read_text(encoding="utf-8"))
+                plan_text = a1.get("stdout") or a1.get("plan")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        changed_files = []
+        cf_path = artifact_dir / "changed_files.json"
+        if cf_path.exists():
+            try:
+                cf_data = json.loads(cf_path.read_text(encoding="utf-8"))
+                raw = cf_data.get("changed_files", cf_data) if isinstance(cf_data, dict) else cf_data
+                if isinstance(raw, list):
+                    for f in raw:
+                        if isinstance(f, str):
+                            changed_files.append({"path": f, "additions": None, "deletions": None})
+                        elif isinstance(f, dict):
+                            changed_files.append(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        diff_raw = None
+        diff_path = artifact_dir / "git_diff.patch"
+        if diff_path.exists():
+            try:
+                diff_raw = diff_path.read_text(encoding="utf-8")
+            except OSError:
+                pass
+
+        return jsonify({
+            "ok": True,
+            "review_packet": {
+                "task": {
+                    "id": task["id"],
+                    "title": task["title"],
+                    "goal": task["goal"],
+                    "project": task["project"],
+                    "status": task["status"],
+                    "risk_level": routing.get("risk_level", "medium"),
+                    "created_at": task["created_at"],
+                },
+                "pipeline": pipeline,
+                "plan": {"text": plan_text},
+                "changed_files": changed_files,
+                "diff": {"raw": diff_raw},
+                "approval": {
+                    "allowed": True,
+                    "friction_level": _friction_level(routing),
+                },
+                "rollback_available": (artifact_dir / "rollback_patch.patch").exists(),
+            },
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/tasks/<task_id>/approve", methods=["POST"])
+def approve_task(task_id):
+    return run([OPERATOR, "task", "approve", task_id])
+
+
+@app.route("/api/tasks/<task_id>/reject", methods=["POST"])
+def reject_task(task_id):
+    return run([OPERATOR, "task", "reject", task_id])
+
+
+@app.route("/api/projects")
+def projects():
+    try:
+        projects_path = os.path.join(PROJECT_ROOT, "registry", "projects.yaml")
+        with open(projects_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        result = []
+        for slug, proj in (data.get("projects") or {}).items():
+            result.append({
+                "name": proj.get("name") or slug,
+                "path": proj.get("repo_path"),
+                "description": proj.get("notes"),
+            })
+        return jsonify({"ok": True, "projects": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/submit", methods=["POST"])
