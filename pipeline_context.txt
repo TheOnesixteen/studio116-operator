@@ -1,24 +1,52 @@
-**Implementation Plan**
+I have enough context. Here is the implementation plan:
 
-**Observation:** The `claude_code` entry in the Worker Ecosystem section describes the role accurately but omits a critical behavioral constraint: Claude Code is the *only* agent that acts as the planner in the sequential pipeline — it produces the plan that Codex then implements. This distinction between "planner" (pipeline role) and general reviewer/architect (capability description) is missing, which could cause confusion about who coordinates multi-agent runs.
+---
 
-**Proposed improvement:** Extend the `claude_code` description to explicitly state its pipeline coordination role — that it authors the implementation plan passed to downstream workers — so any reader of AGENTS.md understands the execution model without needing to read OPERATOR.md first.
+**Plan: Write `docs/operator-ui-v1-spec.md`**
 
-**Concrete edit (single line change in AGENTS.md):**
+This is a write-only documentation task. No code changes. The worktree exists at the target path. The spec must be written as structured markdown covering exactly the sections enumerated in the goal.
 
-Current:
-```
-- `claude_code`: planner and reviewer for architecture decisions, ambiguous debugging, repo comprehension, code review, prompt design, and multi-step reasoning.
-```
+**Step 1 — Verify target directory**
+Confirm `docs/` exists in the worktree or create it. Target file is `docs/operator-ui-v1-spec.md`.
 
-Replace with:
-```
-- `claude_code`: pipeline coordinator and planner — authors the implementation plan consumed by downstream workers (e.g. codex) in sequential runs — and handles architecture decisions, ambiguous debugging, repo comprehension, code review, prompt design, and multi-step reasoning.
-```
+**Step 2 — Write the specification document**
 
-**Steps for Codex to execute:**
-1. Open `AGENTS.md` at the worktree path `/root/Projects/studio116-operator/runtime/worktrees/4b13b1e2-bf2f-4f76-b10d-02d31d5373db/codex/AGENTS.md`.
-2. Replace the `claude_code` bullet exactly as shown above.
-3. Confirm no other lines are modified.
-4. Run no tests (file is documentation only; no test suite applies).
-5. Report: summary of change, files_touched = ["AGENTS.md"], tests_run = "none (docs-only change)", blockers = "none", approval_requests = "none", secret_exposure_check = "no secrets present or touched".
+Write a single structured markdown file with these top-level sections in order:
+
+1. **API Contract** — Every HTTP endpoint the Flask web layer must expose, keyed to existing CLI/engine functions. Start with:
+   - `GET /api/inbox` → `task_engine.task_inbox()`
+   - `GET /api/tasks/{id}` → `task_engine.show_task(task_id)`
+   - `GET /api/tasks/{id}/review-packet` → assembled from artifacts: `worker_packet.json`, `agent1_result.json`, `git_diff.patch`, `changed_files.json`, `review_summary.json`, plus a snapshot of `registry/projects.yaml` state at creation time
+   - `POST /api/tasks/{id}/approve` → `task_engine.approve_task(task_id)`
+   - `POST /api/tasks/{id}/reject` → `task_engine.reject_task(task_id)`
+   - `GET /api/tasks/{id}/diff` → serve `git_diff.patch` artifact as text
+   - `GET /api/queue` → `task_engine.list_tasks()` filtered to active states with lock info from `task_engine.active_locks()`
+   - `GET /api/brain/{project}` → read `registry/projects.yaml` + `registry/workers.yaml`
+   - `POST /api/tasks` → `task_engine.create_task()` (Command Form submission)
+   - Request/response shapes as JSON objects; note which fields are required vs optional.
+
+2. **Screen Inventory** — Five screens with primary question, component list, and mobile layout:
+   - Review Inbox (primary question: what needs my attention right now?)
+   - Review Packet (primary question: is this diff safe to approve?)
+   - Command Form with Preview (primary question: what am I about to create?)
+   - Queue with lock indicators (primary question: what is running / blocked?)
+   - Project Brain page (primary question: what does the system know about this project?)
+
+3. **Review Packet Schema** — Normalized JSON contract between execution engine and UI. Fields: `task_id`, `run_id`, `title`, `project`, `pipeline` (agent1 + agent2), `agent1_plan_text`, `changed_files` (array of objects with path, risk_score, hunk_count), `diff_summary` (stats line), `raw_diff` (full unified diff string), `test_results` (array), `policy_checks` (array of pass/fail), `approval_controls` (friction_level, confirm_token), `rollback_available` (bool + patch path), `brain_snapshot` (project metadata at task creation time).
+
+4. **Approval Friction Model** — Three levels based on `risk_level` field from `StandardizedTask.risk_level`:
+   - Low: single tap/click
+   - Medium: must scroll to bottom of diff, then confirm
+   - High: must expand all file hunks and type confirm phrase
+   - Rollback confirmation always shown regardless of level; no physical gesture requirements.
+
+5. **Mobile Diff Viewer Spec** — File summary cards first (filename, ±lines, risk badge); hunks collapsed by default, tap to expand; no line numbers in default view; "Show raw diff" toggle reveals unified text; sticky approve/reject controls at bottom of viewport.
+
+6. **Security Model** — Caddy reverse proxy restricts to Tailscale IP range (`100.64.0.0/10`); Phase UI-0 has no auth tokens (Tailscale membership is the auth); Flask binds to `127.0.0.1` only, Caddy proxies; all approval actions are POST with CSRF token in session cookie.
+
+7. **ntfy.sh Notification Hooks** — Events that trigger push: task reaches `review` status (topic: `operator-review`, message includes task title + approve URL); task transitions to `done`/`failed`/`canceled`; queue blocked (lock contention). Payload format: title, message, priority, click URL. Hook insertion point: after `record_event()` calls in `task_engine.transition_task()`.
+
+8. **Failed Task View** — Failure taxonomy: `agent1_timeout`, `agent1_nonzero`, `codex_timeout`, `codex_nonzero`, `codex_no_changes`, `promotion_failed`, `preflight_failed`. Each type maps to a displayed message + retry action (re-queue with same packet, discard, or inspect worktree). Worktree path always shown when preserved.
+
+**Step 3 — Confirm constraints satisfied**
+No HTML, no code blocks containing implementation, no packages installed, no commits. File touches only `docs/operator-ui-v1-spec.md`.
