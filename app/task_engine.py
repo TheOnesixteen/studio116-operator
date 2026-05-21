@@ -553,9 +553,13 @@ def approve_task(task_id: str) -> dict[str, Any]:
         raise ValueError(f"Task must be in review to approve; current status is {task['status']}")
     run = _latest_review_run(task_id)
     _assert_phase22_review_task(task, run)
+    routing = _task_json(task, "routing_json", {})
     with _review_action_locks(task, run):
         try:
-            result = _promote_live_codex_docs_only(task, run)
+            if routing.get("delegation_mode") == "sequential_pipeline":
+                result = _promote_sequential_pipeline(task, run)
+            else:
+                result = _promote_live_codex_docs_only(task, run)
         except Exception as exc:
             record_event(
                 "promotion_failed",
@@ -592,9 +596,13 @@ def reject_task(task_id: str) -> dict[str, Any]:
         raise ValueError(f"Task must be in review to reject; current status is {task['status']}")
     run = _latest_review_run(task_id)
     _assert_phase22_review_task(task, run)
+    routing = _task_json(task, "routing_json", {})
     with _review_action_locks(task, run):
         try:
-            result = _discard_live_codex_docs_only(task, run)
+            if routing.get("delegation_mode") == "sequential_pipeline":
+                result = _discard_sequential_pipeline(task, run)
+            else:
+                result = _discard_live_codex_docs_only(task, run)
         except Exception as exc:
             record_event(
                 "discard_failed",
@@ -643,6 +651,14 @@ def _latest_review_run(task_id: str) -> dict[str, Any]:
 def _assert_phase22_review_task(task: dict[str, Any], run: dict[str, Any]) -> None:
     routing = _task_json(task, "routing_json", {})
     mode = routing.get("delegation_mode")
+    if mode == "sequential_pipeline":
+        if task["type"] != "delegated":
+            raise PermissionError("Sequential pipeline review is limited to delegated tasks")
+        if run["run_type"] != "delegated_sequential_pipeline":
+            raise PermissionError("Sequential pipeline review requires a matching pipeline run")
+        if not run["worktree_path"]:
+            raise ValueError("Sequential pipeline review requires a preserved worktree")
+        return
     if mode == LIVE_CODEX_MODEL_FILE_ONLY_MODE:
         default_targets = LIVE_CODEX_MODEL_FILE_ONLY_TARGETS
     elif mode == LIVE_CODEX_POLICY_FILE_ONLY_MODE:
@@ -1126,6 +1142,129 @@ def _promote_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> 
         "rollback_patch_path": str(rollback_patch_path),
         "promotion_summary_path": str(promotion_summary_path),
     }
+
+
+def _promote_sequential_pipeline(task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    worktree_path = _worktree_path_for_review(run)
+    canonical_repo_path = canonical_repo_path_for_task(task)
+    diff_result = git_diff(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", diff_result)
+    changed_result = git_changed_files(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", changed_result)
+    changed_files = _changed_files_from_result(changed_result)
+    if diff_result.exit_code != 0 or changed_result.exit_code != 0 or not changed_files:
+        raise RuntimeError(
+            f"Sequential pipeline promotion preflight failed: "
+            f"diff={diff_result.exit_code} changed={changed_result.exit_code} files={changed_files}"
+        )
+    approved_patch_path = write_text_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="approved_patch",
+        label="Sequential pipeline approved patch",
+        filename="approved_patch.patch",
+        content=diff_result.stdout,
+    )
+    rollback_result = git_reverse_diff(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", rollback_result)
+    if rollback_result.exit_code != 0:
+        raise RuntimeError("Sequential pipeline promotion failed while generating rollback patch")
+    rollback_patch_path = write_text_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="rollback_patch",
+        label="Sequential pipeline rollback patch",
+        filename="rollback_patch.patch",
+        content=rollback_result.stdout,
+    )
+    apply_check_result = git_apply_check(repo_path=canonical_repo_path, patch_path=approved_patch_path)
+    record_worker_execution(run["id"], "shell_ops", apply_check_result)
+    if apply_check_result.exit_code != 0:
+        raise RuntimeError("Sequential pipeline approved patch no longer applies cleanly; task remains in review")
+    canonical_head_before = git_head(worktree_path=canonical_repo_path)
+    record_worker_execution(run["id"], "shell_ops", canonical_head_before)
+    apply_result = git_apply_patch(repo_path=canonical_repo_path, patch_path=approved_patch_path)
+    record_worker_execution(run["id"], "shell_ops", apply_result)
+    if apply_result.exit_code != 0:
+        raise RuntimeError("Sequential pipeline patch apply failed after a successful apply check; task remains in review")
+    canonical_head_after = git_head(worktree_path=canonical_repo_path)
+    record_worker_execution(run["id"], "shell_ops", canonical_head_after)
+    promotion_summary_path = write_json_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="promotion_summary",
+        label="Sequential pipeline promotion summary",
+        filename="promotion_summary.json",
+        data={
+            "summary": "Sequential pipeline diff promoted to canonical working tree without commit, merge, or push",
+            "promoted": True,
+            "changed_files": changed_files,
+            "canonical_repo_path": str(canonical_repo_path),
+            "worktree_path": str(worktree_path),
+            "branch_name": run["branch_name"],
+            "approved_patch_path": str(approved_patch_path),
+            "rollback_patch_path": str(rollback_patch_path),
+            "canonical_head_before": canonical_head_before.stdout.strip(),
+            "canonical_head_after": canonical_head_after.stdout.strip(),
+            "commit_created": False,
+            "merged": False,
+            "pushed": False,
+            "worktree_preserved": True,
+        },
+    )
+    record_event(
+        "promotion_succeeded",
+        "Promoted sequential pipeline diff to canonical working tree without commit, merge, or push",
+        task_id=task["id"],
+        run_id=run["id"],
+        metadata={"promotion_summary_path": str(promotion_summary_path)},
+    )
+    return {
+        "approved_patch_path": str(approved_patch_path),
+        "rollback_patch_path": str(rollback_patch_path),
+        "promotion_summary_path": str(promotion_summary_path),
+    }
+
+
+def _discard_sequential_pipeline(task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    worktree_path = _worktree_path_for_review(run)
+    diff_result = git_diff(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", diff_result)
+    changed_result = git_changed_files(worktree_path=worktree_path)
+    record_worker_execution(run["id"], "shell_ops", changed_result)
+    changed_files = _changed_files_from_result(changed_result)
+    rejected_patch_path = write_text_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="rejected_patch",
+        label="Sequential pipeline rejected patch",
+        filename="rejected_patch.patch",
+        content=diff_result.stdout,
+    )
+    discard_summary_path = write_json_artifact(
+        task_id=task["id"],
+        run_id=run["id"],
+        artifact_type="discard_summary",
+        label="Sequential pipeline discard summary",
+        filename="discard_summary.json",
+        data={
+            "summary": "Sequential pipeline diff rejected and discarded; canonical working tree unchanged",
+            "promoted": False,
+            "changed_files": changed_files,
+            "worktree_path": str(worktree_path),
+            "branch_name": run["branch_name"],
+            "rejected_patch_path": str(rejected_patch_path),
+            "worktree_preserved": True,
+        },
+    )
+    record_event(
+        "promotion_discarded",
+        "Sequential pipeline diff rejected and discarded; canonical working tree unchanged",
+        task_id=task["id"],
+        run_id=run["id"],
+        metadata={"discard_summary_path": str(discard_summary_path)},
+    )
+    return {"discard_summary_path": str(discard_summary_path)}
 
 
 def _discard_live_codex_docs_only(task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:

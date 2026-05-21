@@ -1,0 +1,20 @@
+Implementation Plan for AGENTS.md Improvement:
+
+1. Research & Analysis:
+   - Review AGENTS.md to confirm the current lack of detailed agent descriptions.
+   - Cross-reference registry/workers.yaml to extract the canonical strengths, roles, and use cases for 'claude_code', 'codex', 'gemini_cli', and 'shell_ops'.
+   - Review OPERATOR.md for consistency with the orchestration roles (Planner, Implementer, Reviewer).
+
+2. Strategy:
+   - Add a "Worker Ecosystem" section to AGENTS.md.
+   - Provide a high-level summary of each agent's primary role and strengths to improve developer/agent situational awareness.
+   - Maintain the existing "Rules" section as the primary operational constraints.
+
+3. Execution:
+   - Use a surgical 'replace' operation to append the "Worker Ecosystem" section to the end of AGENTS.md.
+   - Include specific strengths for each worker (e.g., Claude for architecture, Codex for scoped implementation, Gemini for risk review, Shell for diagnostics).
+
+4. Validation:
+   - Verify that the AGENTS.md formatting is correct.
+   - Ensure the descriptions do not contradict OPERATOR.md or the worker registry.
+   - Confirm no unauthorized files or packages were touched.
