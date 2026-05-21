@@ -281,6 +281,7 @@ def projects():
         result = []
         for slug, proj in (data.get("projects") or {}).items():
             result.append({
+                "slug": slug,
                 "name": proj.get("name") or slug,
                 "path": proj.get("repo_path"),
                 "description": proj.get("notes"),
@@ -290,10 +291,54 @@ def projects():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/preview", methods=["POST"])
+def preview():
+    body = request.get_json(silent=True) or {}
+    task_text = body.get("task", "").strip()
+    project_slug = (body.get("project") or "").strip()
+    mode = (body.get("mode") or "auto").strip()
+
+    if not task_text:
+        return jsonify({"ok": False, "error": "missing 'task' field"}), 400
+
+    worker_script = os.path.join(WEB_DIR, "preview_worker.py")
+    payload = json.dumps({
+        "task": task_text,
+        "project": project_slug,
+        "mode": mode,
+        "project_root": PROJECT_ROOT,
+    })
+
+    try:
+        result = subprocess.run(
+            ["python3", worker_script],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=PROJECT_ROOT,
+        )
+        raw = result.stdout.strip()
+        if not raw:
+            err = result.stderr.strip() or "preview produced no output"
+            return jsonify({"ok": False, "error": err}), 500
+        return jsonify(json.loads(raw))
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "preview timed out"}), 504
+    except json.JSONDecodeError as exc:
+        return jsonify({"ok": False, "error": f"invalid JSON from preview: {exc}"}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.route("/api/submit", methods=["POST"])
 def submit():
     body = request.get_json(silent=True) or {}
     task = body.get("task", "").strip()
+    project = (body.get("project") or "").strip()
     if not task:
         return jsonify({"ok": False, "error": "missing 'task' field"}), 400
-    return run([OPERATOR, "do", task])
+    cmd = [OPERATOR, "do", task, "--yes"]
+    if project and project not in ("auto", "scratchpad", ""):
+        cmd += ["--project", project]
+    return run(cmd)

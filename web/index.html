@@ -448,16 +448,6 @@ details > summary:hover { color: var(--text); }
 }
 
 /* ── SUBMIT VIEW ─────────────────────────────────────── */
-.two-col {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-@media (min-width: 640px) {
-  .two-col { grid-template-columns: 1fr 1fr; }
-}
-
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -519,6 +509,178 @@ input[type="text"]:focus { border-color: var(--accent); }
 }
 .output.visible { display: block; }
 .output.err { color: var(--red); }
+
+/* ── COMMAND FORM ────────────────────────────────────── */
+.cmd-form { display: flex; flex-direction: column; gap: 12px; }
+
+.task-textarea {
+  width: 100%;
+  min-height: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 14px;
+  border-radius: var(--r);
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+.task-textarea:focus { border-color: var(--accent); }
+.task-textarea::placeholder { color: var(--muted); }
+
+.form-field { display: flex; flex-direction: column; gap: 5px; }
+.form-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  outline: none;
+  width: 100%;
+  cursor: pointer;
+}
+select:focus { border-color: var(--accent); }
+
+.advanced-toggle { border: none; background: transparent; }
+.advanced-toggle > summary {
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.advanced-toggle > summary::-webkit-details-marker { display: none; }
+.advanced-toggle > summary::before {
+  content: '\25B6';
+  font-size: 9px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.advanced-toggle[open] > summary::before { transform: rotate(90deg); }
+.advanced-toggle > summary:hover { color: var(--text); }
+.advanced-inner { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+
+.mode-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.mode-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 5px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.mode-btn:hover  { color: var(--text); border-color: var(--muted); }
+.mode-btn.active { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+
+.form-actions { display: flex; gap: 10px; }
+
+/* ── PREVIEW PANEL ───────────────────────────────────── */
+.preview-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 16px;
+  display: none;
+}
+.preview-panel.visible { display: block; }
+.preview-panel h2 {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+@media (max-width: 480px) { .preview-grid { grid-template-columns: 1fr; } }
+
+.preview-item { display: flex; flex-direction: column; gap: 3px; }
+.preview-item-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.preview-item-value { font-size: 13px; }
+
+.preview-paths { margin-bottom: 14px; }
+.preview-path-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.preview-path {
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 8px;
+  word-break: break-all;
+}
+
+.preview-actions { display: flex; gap: 10px; margin-top: 4px; }
+
+.btn-queue {
+  flex: 1;
+  padding: 11px 16px;
+  background: var(--green);
+  border: none;
+  border-radius: var(--r);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: bold;
+  color: #000;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.btn-queue:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-queue:hover:not(:disabled) { opacity: 0.85; }
+
+.btn-edit {
+  padding: 11px 16px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.btn-edit:hover { border-color: var(--muted); }
+
+.queue-confirm {
+  display: none;
+  margin-top: 12px;
+  padding: 12px;
+  background: #121e12;
+  border: 1px solid #244724;
+  border-radius: var(--r);
+  font-size: 12px;
+  color: #5a9a5a;
+}
+.queue-confirm.visible { display: block; }
 
 /* ── QUEUE VIEW ──────────────────────────────────────── */
 .queue-wrap { overflow-x: auto; }
@@ -610,23 +772,63 @@ tr:hover td { background: var(--surface2); }
 <!-- ═══════════════════════════════════════════════════ SUBMIT -->
 <div id="view-submit" class="view">
   <div class="wrap">
-    <div class="two-col">
-      <div class="card">
-        <h2>Submit Task</h2>
-        <div class="row">
-          <input type="text" id="taskInput" placeholder="Plain English task description…" />
-          <button class="btn-primary" id="submitBtn" onclick="submitTask()">Queue Task</button>
-        </div>
-        <div class="output" id="submitOutput"></div>
+
+    <!-- Command Form -->
+    <div id="cmd-form-wrap" class="cmd-form" style="margin-bottom:16px">
+      <textarea
+        id="taskTextarea"
+        class="task-textarea"
+        placeholder="Describe your task in plain English…"
+        oninput="autoExpand(this)"
+      ></textarea>
+
+      <div class="form-field">
+        <span class="form-label">Project</span>
+        <select id="projectSelect">
+          <option value="auto">Auto-detect</option>
+          <option value="scratchpad">Scratchpad</option>
+        </select>
       </div>
-      <div class="card">
-        <h2>Run Next</h2>
-        <div class="row">
-          <button class="btn-primary" id="runBtn" onclick="runNext()" style="flex:1">&#9654; Run Next Task</button>
+
+      <details class="advanced-toggle" id="advancedToggle">
+        <summary>Advanced options</summary>
+        <div class="advanced-inner">
+          <div class="form-field">
+            <span class="form-label">Mode</span>
+            <div class="mode-buttons">
+              <button class="mode-btn active" data-mode="auto" onclick="selectMode(this)">Auto</button>
+              <button class="mode-btn" data-mode="fast" onclick="selectMode(this)">Fast</button>
+              <button class="mode-btn" data-mode="normal" onclick="selectMode(this)">Normal</button>
+              <button class="mode-btn" data-mode="deep" onclick="selectMode(this)">Deep</button>
+            </div>
+          </div>
+          <div class="form-field">
+            <span class="form-label">Target files <span style="font-size:10px;color:var(--muted);text-transform:none;letter-spacing:0">(optional, comma-separated)</span></span>
+            <input type="text" id="targetFiles" placeholder="e.g. web/app.py, app/models.py" />
+          </div>
         </div>
-        <div class="output" id="runOutput"></div>
+      </details>
+
+      <div class="form-actions">
+        <button class="btn-primary" id="previewBtn" onclick="previewTask()" style="flex:1">Preview</button>
       </div>
     </div>
+
+    <!-- Preview Panel -->
+    <div id="preview-panel" class="preview-panel" style="margin-bottom:16px">
+      <h2>Preview</h2>
+      <div id="preview-content"></div>
+    </div>
+
+    <!-- Run Next -->
+    <div class="card">
+      <h2>Run Next</h2>
+      <div class="row">
+        <button class="btn-primary" id="runBtn" onclick="runNext()" style="flex:1">&#9654; Run Next Task</button>
+      </div>
+      <div class="output" id="runOutput"></div>
+    </div>
+
   </div>
 </div>
 
@@ -1098,29 +1300,188 @@ async function doReject() {
   }
 }
 
-// ── Submit ───────────────────────────────────────────────────────
-async function submitTask() {
-  const inp = document.getElementById('taskInput');
-  const btn = document.getElementById('submitBtn');
-  const out = document.getElementById('submitOutput');
-  const task = inp.value.trim();
+// ── Command Form ─────────────────────────────────────────────────
+let selectedMode = 'auto';
+let lastPreview = null;
+
+function autoExpand(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.max(160, el.scrollHeight) + 'px';
+}
+
+function selectMode(btn) {
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  selectedMode = btn.dataset.mode;
+}
+
+async function loadProjects() {
+  try {
+    const d = await apiFetch('/api/projects');
+    if (!d.ok) return;
+    const sel = document.getElementById('projectSelect');
+    (d.projects || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.slug || p.name.toLowerCase().replace(/\s+/g, '-');
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+  } catch(_) {}
+}
+
+function getSelectedProjectSlug() {
+  return document.getElementById('projectSelect').value;
+}
+
+async function previewTask() {
+  const textarea = document.getElementById('taskTextarea');
+  const task = textarea.value.trim();
+  if (!task) { textarea.focus(); return; }
+
+  const btn = document.getElementById('previewBtn');
+  btn.disabled = true;
+  btn.textContent = 'Previewing…';
+
+  const panel = document.getElementById('preview-panel');
+  const content = document.getElementById('preview-content');
+  panel.classList.remove('visible');
+  lastPreview = null;
+
+  try {
+    const d = await apiFetch('/api/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task,
+        project: getSelectedProjectSlug(),
+        mode: selectedMode,
+      }),
+    });
+
+    if (!d.ok) {
+      content.innerHTML = `<div class="msg-error">Preview error: ${esc(d.error)}</div>`;
+      panel.classList.add('visible');
+      return;
+    }
+
+    lastPreview = d.preview;
+    renderPreview(d.preview, task);
+    panel.classList.add('visible');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch(e) {
+    content.innerHTML = `<div class="msg-error">Error: ${esc(e.message)}</div>`;
+    panel.classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Preview';
+  }
+}
+
+function renderPreview(p, task) {
+  const content = document.getElementById('preview-content');
+
+  const normLabel = { local: 'Fast (local)', codex: 'Normal (Codex)', claude: 'Deep (Claude)' }[p.normalizer] || p.normalizer;
+  const riskCls2 = { low: 'risk-low', medium: 'risk-medium', high: 'risk-high' }[p.risk_level] || 'risk-medium';
+  const brainHtml = p.brain_available
+    ? `<span style="color:var(--green)">&#10003; ${esc(p.brain_file || 'available')}</span>`
+    : `<span style="color:var(--muted)">not found</span>`;
+
+  const kw = p.triggered_keywords && p.triggered_keywords.length
+    ? `<div style="margin-top:8px;font-size:11px;color:var(--yellow)">Risk keywords: ${p.triggered_keywords.map(k => esc(k)).join(', ')}</div>`
+    : '';
+
+  let pathsHtml = '';
+  if (p.target_paths && p.target_paths.length) {
+    const items = p.target_paths.map(f => `<div class="preview-path">${esc(f)}</div>`).join('');
+    pathsHtml = `<div class="preview-paths">
+      <div class="preview-item-label">Target Files</div>
+      <div class="preview-path-list">${items}</div>
+    </div>`;
+  }
+
+  content.innerHTML = `
+    <div class="preview-grid">
+      <div class="preview-item">
+        <span class="preview-item-label">Project</span>
+        <span class="preview-item-value"><span class="badge project-badge">${esc(p.project)}</span></span>
+      </div>
+      <div class="preview-item">
+        <span class="preview-item-label">Risk</span>
+        <span class="preview-item-value"><span class="badge ${riskCls2}">${esc(p.risk_level)}</span></span>
+      </div>
+      <div class="preview-item">
+        <span class="preview-item-label">Pipeline</span>
+        <span class="preview-item-value">${esc(p.pipeline)}</span>
+      </div>
+      <div class="preview-item">
+        <span class="preview-item-label">Agent</span>
+        <span class="preview-item-value">${esc(p.agent1)}</span>
+      </div>
+      <div class="preview-item">
+        <span class="preview-item-label">Normalizer</span>
+        <span class="preview-item-value">${esc(normLabel)}</span>
+      </div>
+      <div class="preview-item">
+        <span class="preview-item-label">Brain File</span>
+        <span class="preview-item-value">${brainHtml}</span>
+      </div>
+    </div>
+    ${kw}
+    ${pathsHtml}
+    <div class="preview-actions">
+      <button class="btn-queue" id="queueItBtn" onclick="queueIt()">Queue It</button>
+      <button class="btn-edit" onclick="editTask()">Edit</button>
+    </div>
+    <div class="queue-confirm" id="queueConfirm"></div>`;
+}
+
+async function queueIt() {
+  const task = document.getElementById('taskTextarea').value.trim();
   if (!task) return;
-  btn.disabled = true; btn.textContent = 'Queuing…';
+  const btn = document.getElementById('queueItBtn');
+  btn.disabled = true;
+  btn.textContent = 'Queuing…';
   try {
     const d = await apiFetch('/api/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task }),
+      body: JSON.stringify({
+        task,
+        project: getSelectedProjectSlug(),
+        mode: selectedMode,
+      }),
     });
-    showOut(out, d, !d.ok);
-    if (d.ok) inp.value = '';
-  } catch(e) { showOut(out, { error: e.message }, true); }
-  finally { btn.disabled = false; btn.textContent = 'Queue Task'; }
+    const confirm = document.getElementById('queueConfirm');
+    if (d.ok) {
+      const taskId = (d.output && (typeof d.output === 'string' ? d.output : d.output.id || JSON.stringify(d.output))) || 'queued';
+      confirm.textContent = `Queued successfully! Task ID: ${taskId}`;
+      confirm.classList.add('visible');
+      confirm.style.color = 'var(--green)';
+      showToast('Task queued!', 'green');
+      setTimeout(() => {
+        document.getElementById('taskTextarea').value = '';
+        document.getElementById('preview-panel').classList.remove('visible');
+        lastPreview = null;
+      }, 2500);
+    } else {
+      confirm.textContent = `Error: ${d.error || 'Queue failed'}`;
+      confirm.classList.add('visible');
+      confirm.style.color = 'var(--red)';
+      showToast(d.error || 'Queue failed', 'red');
+      btn.disabled = false;
+      btn.textContent = 'Queue It';
+    }
+  } catch(e) {
+    showToast(e.message, 'red');
+    btn.disabled = false;
+    btn.textContent = 'Queue It';
+  }
 }
 
-document.getElementById('taskInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') submitTask();
-});
+function editTask() {
+  document.getElementById('preview-panel').classList.remove('visible');
+  document.getElementById('taskTextarea').focus();
+}
 
 async function runNext() {
   const btn = document.getElementById('runBtn');
@@ -1175,6 +1536,7 @@ refreshHealth();
 setInterval(refreshHealth, 30000);
 loadInbox();
 startAutoRefresh();
+loadProjects();
 </script>
 </body>
 </html>
