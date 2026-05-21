@@ -2,6 +2,8 @@ import json
 import os
 import sqlite3 as _sqlite3
 import subprocess
+import tempfile
+import uuid
 from pathlib import Path
 
 import yaml
@@ -329,6 +331,46 @@ def preview():
         return jsonify({"ok": False, "error": f"invalid JSON from preview: {exc}"}), 500
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/ingest", methods=["POST"])
+def ingest():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "no file uploaded"}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"ok": False, "error": "empty filename"}), 400
+
+    ext = Path(f.filename).suffix.lower()
+    if ext not in (".md", ".txt", ".docx"):
+        return jsonify({"ok": False, "error": f"unsupported file type: {ext}"}), 400
+
+    tmp_path = os.path.join(tempfile.gettempdir(), f"operator-ingest-{uuid.uuid4().hex}{ext}")
+    try:
+        f.save(tmp_path)
+        result = subprocess.run(
+            [OPERATOR, "ingest", tmp_path, "--yes"],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+            cwd="/root/Projects/studio116-operator",
+        )
+        raw = result.stdout.strip() or result.stderr.strip()
+        if result.returncode != 0:
+            return jsonify({"ok": False, "error": raw}), 400
+        try:
+            return jsonify({"ok": True, "output": json.loads(raw)})
+        except (json.JSONDecodeError, ValueError):
+            return jsonify({"ok": True, "output": raw})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "ingest timed out"}), 504
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 @app.route("/api/submit", methods=["POST"])
