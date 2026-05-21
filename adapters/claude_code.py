@@ -12,7 +12,7 @@ def intended_read_only_command(*, packet_path: Path) -> list[str]:
         f"You are the planner agent. Read the worker packet at {packet_path} "
         "and produce a concise implementation plan. Output only the plan as plain text."
     )
-    return ["claude", "-p", prompt, "--dangerously-skip-permissions"]
+    return ["claude", "-p", prompt]
 
 
 def run_read_only(
@@ -22,24 +22,39 @@ def run_read_only(
     packet_path: Path,
     timeout_seconds: int = 600,
 ) -> CommandResult:
-    command = intended_read_only_command(packet_path=packet_path)
+    try:
+        packet_content = packet_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return CommandResult(
+            command="claude",
+            stdout="",
+            stderr=f"Unable to read worker packet {packet_path}: {exc}",
+            exit_code=1,
+        )
+    prompt = (
+        "You are the planner agent. Here is the worker packet:\n\n"
+        f"{packet_content}\n\n"
+        "Produce a concise implementation plan. Output only the plan as plain text."
+    )
+    command = ["claude", "-p", prompt]
     try:
         completed = subprocess.run(
             command,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
             timeout=timeout_seconds,
         )
         result = CommandResult(
-            command=" ".join(command),
+            command="claude -p <prompt>",
             stdout=completed.stdout,
             stderr=completed.stderr,
             exit_code=completed.returncode,
         )
     except subprocess.TimeoutExpired as exc:
         result = CommandResult(
-            command=" ".join(command),
+            command="claude -p <prompt>",
             stdout=exc.stdout if isinstance(exc.stdout, str) else "",
             stderr=exc.stderr if isinstance(exc.stderr, str) else "Claude Code execution timed out",
             exit_code=124,
@@ -47,7 +62,7 @@ def run_read_only(
         )
     except OSError as exc:
         return CommandResult(
-            command=" ".join(command),
+            command="claude -p <prompt>",
             stdout="",
             stderr=f"Claude Code execution failed to start: {exc}",
             exit_code=127,

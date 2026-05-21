@@ -15,3 +15,5 @@ runtime/worktrees/**
 
 .codex/
 .codex
+
+pipeline_context.txt

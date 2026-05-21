@@ -1,20 +1,24 @@
-Implementation Plan for AGENTS.md Improvement:
+**Implementation Plan**
 
-1. Research & Analysis:
-   - Review AGENTS.md to confirm the current lack of detailed agent descriptions.
-   - Cross-reference registry/workers.yaml to extract the canonical strengths, roles, and use cases for 'claude_code', 'codex', 'gemini_cli', and 'shell_ops'.
-   - Review OPERATOR.md for consistency with the orchestration roles (Planner, Implementer, Reviewer).
+**Observation:** The `claude_code` entry in the Worker Ecosystem section describes the role accurately but omits a critical behavioral constraint: Claude Code is the *only* agent that acts as the planner in the sequential pipeline — it produces the plan that Codex then implements. This distinction between "planner" (pipeline role) and general reviewer/architect (capability description) is missing, which could cause confusion about who coordinates multi-agent runs.
 
-2. Strategy:
-   - Add a "Worker Ecosystem" section to AGENTS.md.
-   - Provide a high-level summary of each agent's primary role and strengths to improve developer/agent situational awareness.
-   - Maintain the existing "Rules" section as the primary operational constraints.
+**Proposed improvement:** Extend the `claude_code` description to explicitly state its pipeline coordination role — that it authors the implementation plan passed to downstream workers — so any reader of AGENTS.md understands the execution model without needing to read OPERATOR.md first.
 
-3. Execution:
-   - Use a surgical 'replace' operation to append the "Worker Ecosystem" section to the end of AGENTS.md.
-   - Include specific strengths for each worker (e.g., Claude for architecture, Codex for scoped implementation, Gemini for risk review, Shell for diagnostics).
+**Concrete edit (single line change in AGENTS.md):**
 
-4. Validation:
-   - Verify that the AGENTS.md formatting is correct.
-   - Ensure the descriptions do not contradict OPERATOR.md or the worker registry.
-   - Confirm no unauthorized files or packages were touched.
+Current:
+```
+- `claude_code`: planner and reviewer for architecture decisions, ambiguous debugging, repo comprehension, code review, prompt design, and multi-step reasoning.
+```
+
+Replace with:
+```
+- `claude_code`: pipeline coordinator and planner — authors the implementation plan consumed by downstream workers (e.g. codex) in sequential runs — and handles architecture decisions, ambiguous debugging, repo comprehension, code review, prompt design, and multi-step reasoning.
+```
+
+**Steps for Codex to execute:**
+1. Open `AGENTS.md` at the worktree path `/root/Projects/studio116-operator/runtime/worktrees/4b13b1e2-bf2f-4f76-b10d-02d31d5373db/codex/AGENTS.md`.
+2. Replace the `claude_code` bullet exactly as shown above.
+3. Confirm no other lines are modified.
+4. Run no tests (file is documentation only; no test suite applies).
+5. Report: summary of change, files_touched = ["AGENTS.md"], tests_run = "none (docs-only change)", blockers = "none", approval_requests = "none", secret_exposure_check = "no secrets present or touched".
