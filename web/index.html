@@ -1408,8 +1408,6 @@ async function ingestFile() {
   try {
     const r = await fetch('/api/ingest', { method: 'POST', body: form });
     const d = await r.json();
-    console.log('INGEST RESPONSE:', JSON.stringify(d));
-
     if (!d.ok) {
       resultEl.textContent = 'Error: ' + (d.error || 'ingest failed');
       resultEl.className = 'ingest-result visible err';
