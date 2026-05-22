@@ -348,22 +348,62 @@ def ingest():
     tmp_path = os.path.join(tempfile.gettempdir(), f"operator-ingest-{uuid.uuid4().hex}{ext}")
     try:
         f.save(tmp_path)
+
+        # --- Primary path: structured operator ingest ---
         result = subprocess.run(
             [OPERATOR, "ingest", tmp_path, "--yes"],
             capture_output=True,
             text=True,
             timeout=TIMEOUT,
-            cwd="/root/Projects/studio116-operator",
+            cwd=PROJECT_ROOT,
         )
-        raw = result.stdout.strip() or result.stderr.strip()
-        if result.returncode != 0:
-            return jsonify({"ok": False, "error": raw}), 400
-        try:
-            return jsonify({"ok": True, "output": json.loads(raw)})
-        except (json.JSONDecodeError, ValueError):
-            return jsonify({"ok": True, "output": raw})
+        if result.returncode == 0:
+            raw = result.stdout.strip()
+            try:
+                return jsonify({"ok": True, "output": json.loads(raw)})
+            except (json.JSONDecodeError, ValueError):
+                return jsonify({"ok": True, "output": raw})
+
+        # --- Fallback: raw document mode ---
+        task_text = _extract_text(tmp_path, ext)
+        if task_text is None:
+            # .docx and python-docx unavailable — surface original error
+            return jsonify({"ok": False, "error": result.stderr.strip() or result.stdout.strip()}), 400
+
+        task_text = task_text[:6000]
+
+        worker_script = os.path.join(WEB_DIR, "preview_worker.py")
+        payload = json.dumps({
+            "task": task_text,
+            "project": "auto",
+            "mode": "auto",
+            "project_root": PROJECT_ROOT,
+        })
+        pw = subprocess.run(
+            ["python3", worker_script],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=PROJECT_ROOT,
+        )
+        pw_raw = pw.stdout.strip()
+        if not pw_raw:
+            err = pw.stderr.strip() or "raw document preview produced no output"
+            return jsonify({"ok": False, "error": err}), 500
+
+        preview_data = json.loads(pw_raw)
+        if not preview_data.get("ok"):
+            return jsonify(preview_data), 500
+
+        preview_data["mode"] = "raw_document"
+        preview_data["raw_task"] = task_text
+        return jsonify(preview_data)
+
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "ingest timed out"}), 504
+    except json.JSONDecodeError as exc:
+        return jsonify({"ok": False, "error": f"invalid JSON from preview worker: {exc}"}), 500
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     finally:
@@ -371,6 +411,21 @@ def ingest():
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+def _extract_text(path: str, ext: str) -> "str | None":
+    """Return plain text from a file, or None if extraction is not possible."""
+    if ext in (".md", ".txt"):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    if ext == ".docx":
+        try:
+            import docx as _docx  # python-docx
+            doc = _docx.Document(path)
+            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        except ImportError:
+            return None
+    return None
 
 
 @app.route("/api/submit", methods=["POST"])

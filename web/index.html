@@ -1387,11 +1387,11 @@ async function doReject() {
 async function ingestFile() {
   const fileInput = document.getElementById('specFileInput');
   const btn = document.getElementById('ingestBtn');
-  const result = document.getElementById('ingestResult');
+  const resultEl = document.getElementById('ingestResult');
 
   if (!fileInput.files.length) {
-    result.textContent = 'No file selected.';
-    result.className = 'ingest-result visible err';
+    resultEl.textContent = 'No file selected.';
+    resultEl.className = 'ingest-result visible err';
     return;
   }
 
@@ -1401,22 +1401,44 @@ async function ingestFile() {
 
   btn.disabled = true;
   btn.textContent = 'Ingesting…';
-  result.className = 'ingest-result';
+  resultEl.className = 'ingest-result';
 
   try {
     const r = await fetch('/api/ingest', { method: 'POST', body: form });
     const d = await r.json();
-    if (d.ok) {
-      result.textContent = '✓ Ingested: ' + (d.output ? String(d.output).trim() : 'task queued');
-      result.className = 'ingest-result visible ok';
-      fileInput.value = '';
-    } else {
-      result.textContent = 'Error: ' + (d.error || 'ingest failed');
-      result.className = 'ingest-result visible err';
+
+    if (!d.ok) {
+      resultEl.textContent = 'Error: ' + (d.error || 'ingest failed');
+      resultEl.className = 'ingest-result visible err';
+      return;
     }
+
+    // Raw document fallback — show preview panel with extracted task
+    if (d.mode === 'raw_document') {
+      fileInput.value = '';
+      resultEl.textContent = '✓ Document extracted — review the preview below before queuing.';
+      resultEl.className = 'ingest-result visible ok';
+
+      lastPreview = d.preview;
+      lastPreview._raw_task = d.raw_task;
+      lastPreview._source = 'raw_document';
+
+      const panel = document.getElementById('preview-panel');
+      const content = document.getElementById('preview-content');
+      renderPreview(d.preview, d.raw_task, '📄 Extracted from uploaded document');
+      panel.classList.add('visible');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+
+    // Structured ingest success
+    resultEl.textContent = '✓ Ingested: ' + (d.output ? String(d.output).trim() : 'task queued');
+    resultEl.className = 'ingest-result visible ok';
+    fileInput.value = '';
+
   } catch(e) {
-    result.textContent = 'Error: ' + e.message;
-    result.className = 'ingest-result visible err';
+    resultEl.textContent = 'Error: ' + e.message;
+    resultEl.className = 'ingest-result visible err';
   } finally {
     btn.disabled = false;
     btn.textContent = 'Ingest File';
@@ -1500,7 +1522,7 @@ async function previewTask() {
   }
 }
 
-function renderPreview(p, task) {
+function renderPreview(p, task, note) {
   const content = document.getElementById('preview-content');
 
   const normLabel = { local: 'Fast (local)', codex: 'Normal (Codex)', claude: 'Deep (Claude)' }[p.normalizer] || p.normalizer;
@@ -1508,6 +1530,10 @@ function renderPreview(p, task) {
   const brainHtml = p.brain_available
     ? `<span style="color:var(--green)">&#10003; ${esc(p.brain_file || 'available')}</span>`
     : `<span style="color:var(--muted)">not found</span>`;
+
+  const noteHtml = note
+    ? `<div style="margin-bottom:10px;font-size:12px;color:var(--muted);font-style:italic">${esc(note)}</div>`
+    : '';
 
   const kw = p.triggered_keywords && p.triggered_keywords.length
     ? `<div style="margin-top:8px;font-size:11px;color:var(--yellow)">Risk keywords: ${p.triggered_keywords.map(k => esc(k)).join(', ')}</div>`
@@ -1523,6 +1549,7 @@ function renderPreview(p, task) {
   }
 
   content.innerHTML = `
+    ${noteHtml}
     <div class="preview-grid">
       <div class="preview-item">
         <span class="preview-item-label">Project</span>
@@ -1559,7 +1586,10 @@ function renderPreview(p, task) {
 }
 
 async function queueIt() {
-  const task = document.getElementById('taskTextarea').value.trim();
+  // Use extracted document text when queuing from raw_document ingest
+  const task = (lastPreview && lastPreview._source === 'raw_document' && lastPreview._raw_task)
+    ? lastPreview._raw_task
+    : document.getElementById('taskTextarea').value.trim();
   if (!task) return;
   const btn = document.getElementById('queueItBtn');
   btn.disabled = true;
