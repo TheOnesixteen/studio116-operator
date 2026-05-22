@@ -1,0 +1,13 @@
+[Unit]
+Description=Studio 116 Operator Web UI
+After=network.target
+
+[Service]
+WorkingDirectory=/root/Projects/studio116-operator
+ExecStart=python3 -m flask --app web/app.py run --host=127.0.0.1 --port=5050
+Restart=on-failure
+RestartSec=5
+Environment=FLASK_ENV=production
+
+[Install]
+WantedBy=multi-user.target

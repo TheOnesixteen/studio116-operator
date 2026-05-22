@@ -1423,6 +1423,9 @@ async function ingestFile() {
       lastPreview = d.preview;
       lastPreview._raw_task = d.raw_task;
       lastPreview._source = 'raw_document';
+      lastPreview._project = d.preview.project;
+      lastPreview._mode = selectedMode;
+      lastPreview._delegation_mode = d.preview.pipeline_raw;
 
       const panel = document.getElementById('preview-panel');
       const content = document.getElementById('preview-content');
@@ -1514,6 +1517,10 @@ async function previewTask() {
     }
 
     lastPreview = d.preview;
+    lastPreview._task = task;
+    lastPreview._project = d.preview.project;
+    lastPreview._mode = selectedMode;
+    lastPreview._delegation_mode = d.preview.pipeline_raw;
     renderPreview(d.preview, task);
     panel.classList.add('visible');
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1594,7 +1601,10 @@ async function queueIt() {
   const task = (lastPreview && lastPreview._source === 'raw_document' && lastPreview._raw_task)
     ? lastPreview._raw_task
     : document.getElementById('taskTextarea').value.trim();
-  if (!task) return;
+  if (!task || !lastPreview) return;
+  const submitProject = lastPreview.project || lastPreview._project || getSelectedProjectSlug();
+  const submitMode = lastPreview._mode || selectedMode;
+  const submitDelegationMode = lastPreview.pipeline_raw || lastPreview._delegation_mode;
   const btn = document.getElementById('queueItBtn');
   btn.disabled = true;
   btn.textContent = 'Queuing…';
@@ -1604,8 +1614,11 @@ async function queueIt() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         task,
-        project: getSelectedProjectSlug(),
-        mode: selectedMode,
+        project: submitProject,
+        mode: submitMode,
+        delegation_mode: submitDelegationMode,
+        task_type: lastPreview.task_type,
+        preview: lastPreview,
       }),
     });
     const confirm = document.getElementById('queueConfirm');

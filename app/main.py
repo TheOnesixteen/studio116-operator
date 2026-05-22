@@ -67,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
             "live_codex_policy_file_only",
             "live_codex_model_file_only",
             "live_codex_scaffold_only",
+            "sequential_pipeline",
         ),
         default="dry_run",
     )
@@ -551,6 +552,44 @@ def main(argv: list[str] | None = None) -> int:
                         goal=args.goal,
                         target_paths=args.target_paths,
                         requested_by=args.requested_by,
+                    )
+                elif args.delegation_mode == "sequential_pipeline":
+                    if args.worker != "codex":
+                        raise ValueError("sequential_pipeline requires --worker codex")
+                    task_id = create_task(
+                        project=args.project,
+                        task_type="delegated",
+                        title=args.title,
+                        goal=args.goal,
+                        priority=args.priority,
+                        requested_by=args.requested_by,
+                        constraints=[
+                            "Sequential pipeline task queued from preview",
+                            "Agent1 plans; Codex implements",
+                            "Canonical checkout must remain untouched until review approval",
+                            "No deployment",
+                            "No service restarts",
+                            "No secret reads",
+                            "No package installs",
+                            "No network-dependent work",
+                            "No auto-commit",
+                            "No auto-merge",
+                            "No auto-push",
+                        ],
+                        acceptance_criteria=[
+                            "Run sequential pipeline",
+                            "Stop in review after successful Codex execution",
+                            "Require Rusty approval before any follow-on action",
+                        ],
+                        routing={
+                            "worker": "codex",
+                            "delegation_mode": "sequential_pipeline",
+                            "read_only": False,
+                            "target_paths": args.target_paths or ["README.md"],
+                            "agent1": "claude_code",
+                            "agent2": "codex",
+                        },
+                        metadata={"queued_from_preview": True},
                     )
                 else:
                     task_id = create_delegated_dry_run_task(

@@ -438,6 +438,36 @@ def submit():
     project = (body.get("project") or "").strip()
     if not task:
         return jsonify({"ok": False, "error": "missing 'task' field"}), 400
+    delegation_mode = (body.get("delegation_mode") or "").strip()
+    preview = body.get("preview") if isinstance(body.get("preview"), dict) else {}
+    pipeline_raw = (preview.get("pipeline_raw") or delegation_mode).strip()
+    if pipeline_raw:
+        project_slug = (preview.get("project") or project or "operator").strip()
+        target_paths = preview.get("target_paths") if isinstance(preview.get("target_paths"), list) else []
+        worker = preview.get("agent1") if pipeline_raw == "dry_run" else "codex"
+        if worker not in {"codex", "claude_code", "gemini_cli"}:
+            return jsonify({"ok": False, "error": f"unsupported preview worker: {worker}"}), 400
+        cmd = [
+            OPERATOR,
+            "task",
+            "create",
+            "--project",
+            project_slug,
+            "--type",
+            "delegated",
+            "--title",
+            task.splitlines()[0][:60] or "Queued Operator task",
+            "--goal",
+            task,
+            "--worker",
+            worker,
+            "--delegation-mode",
+            pipeline_raw,
+        ]
+        for target_path in target_paths:
+            if isinstance(target_path, str) and target_path.strip():
+                cmd += ["--target-path", target_path.strip()]
+        return run(cmd)
     cmd = [OPERATOR, "do", task, "--yes"]
     if project and project not in ("auto", "scratchpad", ""):
         cmd += ["--project", project]

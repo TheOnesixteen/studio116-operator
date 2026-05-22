@@ -97,11 +97,7 @@ def main() -> None:
         # dry_run fallback undersells what will actually run. Override to
         # sequential_pipeline for delegated and planning tasks so the preview is honest.
         delegation_mode = task_obj.delegation_mode
-        if (
-            mode in ("normal", "deep")
-            and delegation_mode == "dry_run"
-            and task_obj.task_type in ("delegated", "planning")
-        ):
+        if mode in ("normal", "deep") and delegation_mode == "dry_run":
             delegation_mode = "sequential_pipeline"
 
         pipeline_map = {
@@ -120,6 +116,7 @@ def main() -> None:
                 "project": task_obj.project,
                 "pipeline": pipeline_map.get(delegation_mode, delegation_mode),
                 "pipeline_raw": delegation_mode,
+                "task_type": task_obj.task_type,
                 "risk_level": task_obj.risk_level,
                 "agent1": task_obj.agent,
                 "target_paths": task_obj.target_paths,
