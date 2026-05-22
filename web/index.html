@@ -1002,7 +1002,15 @@ function pipelineName(mode) {
 }
 
 function riskCls(level) {
-  return { low: 'risk-low', medium: 'risk-medium', high: 'risk-high' }[level] || 'risk-medium';
+  return { low: 'risk-low', medium: 'risk-medium', high: 'risk-high' }[normalizeRiskLevel(level)] || 'risk-medium';
+}
+
+function normalizeRiskLevel(level) {
+  const v = String(level || 'medium').trim().toLowerCase().replace(/[-\s]+/g, '_');
+  if (v === 'low' || v === 'low_risk') return 'low';
+  if (v === 'medium' || v === 'medium_risk') return 'medium';
+  if (v === 'high' || v === 'high_risk') return 'high';
+  return 'medium';
 }
 
 function statusBadge(s) {
@@ -1068,13 +1076,14 @@ async function loadInbox() {
       return;
     }
     list.innerHTML = tasks.map(t => {
-      const rc = riskCls(t.risk_level || 'medium');
+      const risk = normalizeRiskLevel(t.risk_level);
+      const rc = riskCls(risk);
       const files = Array.isArray(t.changed_files) ? t.changed_files.length : 0;
       return `
-        <div class="inbox-card" onclick="openPacket(${JSON.stringify(t.id)})">
+        <div class="inbox-card" data-task-id="${esc(t.id)}">
           <div class="card-top">
             <span class="badge project-badge">${esc(t.project)}</span>
-            <span class="badge ${rc}">${esc(t.risk_level || 'medium')} risk</span>
+            <span class="badge ${rc}">${esc(risk)} risk</span>
           </div>
           <div class="card-title">${esc(t.title)}</div>
           <div class="card-meta">
@@ -1084,9 +1093,16 @@ async function loadInbox() {
           </div>
         </div>`;
     }).join('');
+    bindPacketOpeners(list);
   } catch(e) {
     list.innerHTML = `<div class="msg-error">Error: ${esc(e.message)}</div>`;
   }
+}
+
+function bindPacketOpeners(root) {
+  root.querySelectorAll('[data-task-id]').forEach(el => {
+    el.addEventListener('click', () => openPacket(el.dataset.taskId));
+  });
 }
 
 function startAutoRefresh() {
@@ -1125,8 +1141,8 @@ async function openPacket(taskId) {
 
 function renderPacket(pkt, taskId) {
   const task = pkt.task || {};
-  const risk = task.risk_level || 'medium';
-  const friction = (pkt.approval && pkt.approval.friction_level) || risk;
+  const risk = normalizeRiskLevel(task.risk_level);
+  const friction = normalizeRiskLevel((pkt.approval && pkt.approval.friction_level) || risk);
   PKT.frictionLevel = friction;
 
   const pipeline = pkt.pipeline || {};
@@ -1263,6 +1279,7 @@ function toggleDiff(id) {
 // ── Approve / Reject bar ─────────────────────────────────────────
 function buildApproveBar(taskId, friction, rollbackOk) {
   const bar = document.getElementById('packet-actions');
+  friction = normalizeRiskLevel(friction);
   const rollHtml = `<div class="rollback-note ${rollbackOk ? 'ok' : 'warn'}">${rollbackOk ? '✓ Rollback available' : '⚠ Rollback not available'}</div>`;
 
   let frictionHtml = '';
@@ -1692,9 +1709,10 @@ async function loadQueue() {
         <td>${esc(t.title)}</td>
         <td class="id-cell">${esc((t.id || '').slice(0, 8))}…</td>
         <td>${t.status === 'review'
-          ? `<button class="review-link" onclick="openPacket(${JSON.stringify(t.id)})">Review</button>`
+          ? `<button class="review-link" data-task-id="${esc(t.id)}">Review</button>`
           : ''}</td>
       </tr>`).join('');
+    bindPacketOpeners(tbody);
     document.getElementById('queueCount').textContent = d.output.length + ' tasks';
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="5" style="color:var(--red);padding:12px 8px">Error: ${esc(e.message)}</td></tr>`;
