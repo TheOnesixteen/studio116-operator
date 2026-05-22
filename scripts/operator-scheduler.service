@@ -1,0 +1,18 @@
+[Unit]
+Description=Studio 116 Operator Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Projects/studio116-operator
+Environment=OPERATOR_CWD=/root/Projects/studio116-operator
+ExecStart=/bin/bash -lc 'while true; do /root/Projects/studio116-operator/scripts/operator run next || true; sleep 15; done'
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=operator-scheduler
+
+[Install]
+WantedBy=multi-user.target
