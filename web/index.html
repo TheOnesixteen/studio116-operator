@@ -1298,9 +1298,15 @@ function buildApproveBar(taskId, friction, rollbackOk) {
 
   bar.innerHTML = `${rollHtml}${frictionHtml}
     <div class="action-row">
-      <button class="btn-approve" id="approveBtn" ${disabled ? 'disabled' : ''} onclick="doApprove(${JSON.stringify(taskId)})">Approve</button>
-      <button class="btn-reject" onclick="openRejectModal(${JSON.stringify(taskId)})">Reject</button>
+      <button class="btn-approve" id="approveBtn" ${disabled ? 'disabled' : ''} data-task-id="${esc(taskId)}">Approve</button>
+      <button class="btn-reject" id="rejectBtn" data-task-id="${esc(taskId)}">Reject</button>
     </div>`;
+  document.getElementById('approveBtn').addEventListener('click', function() {
+    doApprove(this.dataset.taskId);
+  });
+  document.getElementById('rejectBtn').addEventListener('click', function() {
+    openRejectModal(this.dataset.taskId);
+  });
 }
 
 function updateApprove() {
