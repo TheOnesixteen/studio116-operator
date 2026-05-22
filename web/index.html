@@ -857,14 +857,6 @@ tr:hover td { background: var(--surface2); }
         oninput="autoExpand(this)"
       ></textarea>
 
-      <div class="ingest-divider">— or upload a spec file —</div>
-
-      <div class="ingest-row">
-        <input type="file" id="specFileInput" accept=".md,.txt,.docx" />
-        <button class="btn-ingest" id="ingestBtn" onclick="ingestFile()">Ingest File</button>
-      </div>
-      <div id="ingestResult" class="ingest-result"></div>
-
       <div class="form-field">
         <span class="form-label">Project</span>
         <select id="projectSelect">
@@ -873,16 +865,16 @@ tr:hover td { background: var(--surface2); }
         </select>
       </div>
 
-      <details class="advanced-toggle" id="advancedToggle">
+      <details class="advanced-toggle" id="advancedToggle" open>
         <summary>Advanced options</summary>
         <div class="advanced-inner">
           <div class="form-field">
             <span class="form-label">Mode</span>
             <div class="mode-buttons">
-              <button class="mode-btn active" data-mode="auto" onclick="selectMode(this)">Auto</button>
+              <button class="mode-btn" data-mode="auto" onclick="selectMode(this)">Auto</button>
               <button class="mode-btn" data-mode="fast" onclick="selectMode(this)">Fast</button>
               <button class="mode-btn" data-mode="normal" onclick="selectMode(this)">Normal</button>
-              <button class="mode-btn" data-mode="deep" onclick="selectMode(this)">Deep</button>
+              <button class="mode-btn active" data-mode="deep" onclick="selectMode(this)">Deep</button>
             </div>
           </div>
           <div class="form-field">
@@ -891,6 +883,14 @@ tr:hover td { background: var(--surface2); }
           </div>
         </div>
       </details>
+
+      <div class="ingest-divider">— or upload a spec file —</div>
+
+      <div class="ingest-row">
+        <input type="file" id="specFileInput" accept=".md,.txt,.docx" />
+        <button class="btn-ingest" id="ingestBtn" onclick="ingestFile()">Ingest File</button>
+      </div>
+      <div id="ingestResult" class="ingest-result"></div>
 
       <div class="form-actions">
         <button class="btn-primary" id="previewBtn" onclick="previewTask()">Preview</button>
@@ -995,7 +995,7 @@ function pipelineName(mode) {
     live_codex_tests_only:      'agent1 → Codex',
     live_codex_model_file_only: 'agent1 → Codex',
     live_codex_policy_file_only:'agent1 → Codex',
-    sequential_pipeline:        'agent1 → Codex',
+    sequential_pipeline:        'Claude → Codex',
     dry_run:                    'Dry Run',
   };
   return map[mode] || mode || '—';
@@ -1398,6 +1398,8 @@ async function ingestFile() {
   const file = fileInput.files[0];
   const form = new FormData();
   form.append('file', file);
+  form.append('project', getSelectedProjectSlug());
+  form.append('mode', selectedMode);
 
   btn.disabled = true;
   btn.textContent = 'Ingesting…';
@@ -1406,6 +1408,7 @@ async function ingestFile() {
   try {
     const r = await fetch('/api/ingest', { method: 'POST', body: form });
     const d = await r.json();
+    console.log('INGEST RESPONSE:', JSON.stringify(d));
 
     if (!d.ok) {
       resultEl.textContent = 'Error: ' + (d.error || 'ingest failed');
@@ -1446,7 +1449,7 @@ async function ingestFile() {
 }
 
 // ── Command Form ─────────────────────────────────────────────────
-let selectedMode = 'auto';
+let selectedMode = 'deep';
 let lastPreview = null;
 
 function autoExpand(el) {
@@ -1471,6 +1474,9 @@ async function loadProjects() {
       opt.textContent = p.name;
       sel.appendChild(opt);
     });
+    // Auto-select redletters if present
+    const redlettersOpt = Array.from(sel.options).find(o => o.value === 'redletters');
+    if (redlettersOpt) sel.value = 'redletters';
   } catch(_) {}
 }
 

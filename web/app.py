@@ -345,6 +345,9 @@ def ingest():
     if ext not in (".md", ".txt", ".docx"):
         return jsonify({"ok": False, "error": f"unsupported file type: {ext}"}), 400
 
+    project_slug = (request.form.get("project") or "auto").strip()
+    mode = (request.form.get("mode") or "auto").strip()
+
     tmp_path = os.path.join(tempfile.gettempdir(), f"operator-ingest-{uuid.uuid4().hex}{ext}")
     try:
         f.save(tmp_path)
@@ -375,8 +378,8 @@ def ingest():
         worker_script = os.path.join(WEB_DIR, "preview_worker.py")
         payload = json.dumps({
             "task": task_text,
-            "project": "auto",
-            "mode": "auto",
+            "project": project_slug,
+            "mode": mode,
             "project_root": PROJECT_ROOT,
         })
         pw = subprocess.run(

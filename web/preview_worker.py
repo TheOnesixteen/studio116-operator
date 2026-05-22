@@ -93,13 +93,24 @@ def main() -> None:
                     brain_file = name
                     break
 
+        # When the user explicitly picks "normal" or "deep", the local normalizer's
+        # dry_run fallback undersells what will actually run. Override to
+        # sequential_pipeline for delegated and planning tasks so the preview is honest.
+        delegation_mode = task_obj.delegation_mode
+        if (
+            mode in ("normal", "deep")
+            and delegation_mode == "dry_run"
+            and task_obj.task_type in ("delegated", "planning")
+        ):
+            delegation_mode = "sequential_pipeline"
+
         pipeline_map = {
             "live_codex_docs_only":        "agent1 → Codex",
             "live_codex_scaffold_only":    "agent1 → Codex",
             "live_codex_tests_only":       "agent1 → Codex",
             "live_codex_model_file_only":  "agent1 → Codex",
             "live_codex_policy_file_only": "agent1 → Codex",
-            "sequential_pipeline":         "agent1 → Codex",
+            "sequential_pipeline":         "Claude → Codex",
             "dry_run":                     "Dry Run",
         }
 
@@ -107,8 +118,8 @@ def main() -> None:
             "ok": True,
             "preview": {
                 "project": task_obj.project,
-                "pipeline": pipeline_map.get(task_obj.delegation_mode, task_obj.delegation_mode),
-                "pipeline_raw": task_obj.delegation_mode,
+                "pipeline": pipeline_map.get(delegation_mode, delegation_mode),
+                "pipeline_raw": delegation_mode,
                 "risk_level": task_obj.risk_level,
                 "agent1": task_obj.agent,
                 "target_paths": task_obj.target_paths,
