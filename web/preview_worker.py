@@ -9,6 +9,7 @@ import io
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 # Fix sys.path: Python adds the script's directory (web/) to sys.path[0],
@@ -31,6 +32,11 @@ def main() -> None:
     project_slug: str = (req.get("project") or "").strip()
     mode: str = (req.get("mode") or "auto").strip()
     project_root: str = req.get("project_root", ".")
+    requested_target_paths = [
+        str(path).strip()
+        for path in req.get("target_paths", [])
+        if isinstance(path, str) and str(path).strip()
+    ]
 
     if not task_text:
         _out({"ok": False, "error": "missing 'task' field"})
@@ -97,6 +103,10 @@ def main() -> None:
         # dry_run fallback undersells what will actually run. Override to
         # sequential_pipeline for delegated and planning tasks so the preview is honest.
         delegation_mode = task_obj.delegation_mode
+        if requested_target_paths:
+            task_obj = replace(task_obj, target_paths=requested_target_paths)
+            if all(path.endswith(".md") for path in requested_target_paths):
+                delegation_mode = "live_codex_docs_only"
         if mode in ("normal", "deep") and delegation_mode == "dry_run":
             delegation_mode = "sequential_pipeline"
 

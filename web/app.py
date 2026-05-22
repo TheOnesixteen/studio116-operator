@@ -308,6 +308,7 @@ def preview():
     task_text = body.get("task", "").strip()
     project_slug = (body.get("project") or "").strip()
     mode = (body.get("mode") or "auto").strip()
+    target_paths = body.get("target_paths") if isinstance(body.get("target_paths"), list) else []
 
     if not task_text:
         return jsonify({"ok": False, "error": "missing 'task' field"}), 400
@@ -317,6 +318,7 @@ def preview():
         "task": task_text,
         "project": project_slug,
         "mode": mode,
+        "target_paths": target_paths,
         "project_root": PROJECT_ROOT,
     })
 
@@ -389,6 +391,7 @@ def ingest():
             "task": task_text,
             "project": project_slug,
             "mode": mode,
+            "target_paths": [],
             "project_root": PROJECT_ROOT,
         })
         pw = subprocess.run(

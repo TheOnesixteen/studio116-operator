@@ -1508,6 +1508,14 @@ function getSelectedProjectSlug() {
   return document.getElementById('projectSelect').value;
 }
 
+function getTargetFiles() {
+  const raw = document.getElementById('targetFiles').value || '';
+  return raw
+    .split(/[\n,]+/)
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 async function previewTask() {
   const textarea = document.getElementById('taskTextarea');
   const task = textarea.value.trim();
@@ -1530,6 +1538,7 @@ async function previewTask() {
         task,
         project: getSelectedProjectSlug(),
         mode: selectedMode,
+        target_paths: getTargetFiles(),
       }),
     });
 

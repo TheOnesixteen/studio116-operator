@@ -1,4 +1,6 @@
 import unittest
+import json
+import subprocess
 
 from app.intake.normalizer import normalize_task
 from app.intake.risk_scorer import score_risk
@@ -52,6 +54,30 @@ class HandbookRoutingTests(unittest.TestCase):
 
         self.assertEqual(task.delegation_mode, "live_codex_docs_only")
         self.assertEqual(task.target_paths, ["docs/operator-handbook/policy-and-services.md"])
+
+    def test_preview_worker_preserves_explicit_markdown_target(self):
+        payload = {
+            "task": "Write a project onboarding page that mentions policy",
+            "project": "operator",
+            "mode": "deep",
+            "target_paths": ["docs/operator-handbook/how-to-add-a-project.md"],
+            "project_root": "/root/Projects/studio116-operator",
+        }
+
+        result = subprocess.run(
+            ["python3", "web/preview_worker.py"],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["preview"]["pipeline_raw"], "live_codex_docs_only")
+        self.assertEqual(data["preview"]["target_paths"], ["docs/operator-handbook/how-to-add-a-project.md"])
 
 
 if __name__ == "__main__":
