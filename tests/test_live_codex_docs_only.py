@@ -101,7 +101,10 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         self.assertIn("/worktrees/", run["worktree_path"])
         worker_packet = _artifact_data(task_view, "worker_packet")
         self.assertEqual(worker_packet["target_paths"], ["README.md"])
-        self.assertEqual(worker_packet["allowed_targets"], ["AGENTS.md", "OPERATOR.md", "README.md"])
+        self.assertEqual(
+            worker_packet["allowed_targets"],
+            ["AGENTS.md", "OPERATOR.md", "README.md", "docs/operator-handbook/*.md"],
+        )
         self.assertTrue(_check(preflight_data, "project_is_operator_or_known_writable")["passed"])
         self.assertTrue(_check(preflight_data, "repo_root_is_operator_or_project_repo")["passed"])
         codex_run.assert_called_once()
@@ -195,6 +198,19 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         self.assertTrue(redletters_preflight["passed"])
         self.assertTrue(_check(redletters_preflight, "paths_are_policy_allowed")["passed"])
         self.assertIn("docs/*.md", redletters_preflight["allowed_targets"])
+
+    def test_operator_handbook_docs_targets_pass_preflight(self):
+        preflight = _preflight_for(
+            "operator",
+            [
+                "docs/operator-handbook/README.md",
+                "docs/operator-handbook/project-registry-and-policy.md",
+            ],
+        )
+
+        self.assertTrue(preflight["passed"])
+        self.assertTrue(_check(preflight, "paths_are_policy_allowed")["passed"])
+        self.assertIn("docs/operator-handbook/*.md", preflight["allowed_targets"])
 
     def test_redletters_rejects_non_docs_app_code_target_before_launch(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-redletters-app")
@@ -356,6 +372,46 @@ class LiveCodexDocsOnlyTests(unittest.TestCase):
         self.assertEqual(task_view["task"]["status"], "failed")
         self.assertFalse(changed_data["passed"])
         self.assertTrue(any(check["name"] == "changed_files_are_policy_allowed" and not check["passed"] for check in changed_data["checks"]))
+        self.assertTrue(
+            any(
+                check["name"] == "changed_files_within_requested_target_paths" and not check["passed"]
+                for check in changed_data["checks"]
+            )
+        )
+
+    def test_changed_files_validation_enforces_requested_targets_post_run(self):
+        runtime_dir, db_path = _runtime("studio116-operator-test-requested-targets")
+        with mock.patch.dict(os.environ, {"OPERATOR_RUNTIME_DIR": runtime_dir, "OPERATOR_DB_PATH": db_path}):
+            init_db()
+            with mock.patch("app.task_engine.create_worktree", return_value=CommandResult("git worktree add", "", "", 0)), mock.patch(
+                "app.task_engine.run_live_docs_only", return_value=CommandResult("codex exec", "ok", "", 0)
+            ), mock.patch("app.task_engine.git_diff", return_value=CommandResult("git diff", "diff", "", 0)), mock.patch(
+                "app.task_engine.git_changed_files",
+                return_value=CommandResult(
+                    "git diff --name-only",
+                    "docs/operator-handbook/README.md\ndocs/operator-handbook/extra.md\n",
+                    "",
+                    0,
+                ),
+            ), mock.patch(
+                "app.task_engine.git_head",
+                return_value=CommandResult("git rev-parse HEAD", "abc123\n", "", 0),
+            ):
+                task_id = create_live_codex_docs_only_task(
+                    project="operator",
+                    title="Handbook docs task",
+                    goal="Create handbook docs",
+                    target_paths=["docs/operator-handbook/README.md"],
+                )
+                result = run_next(task_id)
+            task_view = show_task(task_id)
+            changed_data = _artifact_data(task_view, "changed_files")
+
+        self.assertFalse(result["task_succeeded"])
+        self.assertEqual(task_view["task"]["status"], "failed")
+        requested_check = _check(changed_data, "changed_files_within_requested_target_paths")
+        self.assertFalse(requested_check["passed"])
+        self.assertEqual(requested_check["details"]["outside_requested_target_paths"], ["docs/operator-handbook/extra.md"])
 
     def test_approve_and_reject_only_from_review(self):
         runtime_dir, db_path = _runtime("studio116-operator-test-live-codex-approve")

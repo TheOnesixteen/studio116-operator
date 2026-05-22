@@ -34,6 +34,46 @@ class OperatorWebSubmitTests(unittest.TestCase):
         self.assertIn("README.md", command)
         self.assertNotIn("do", command)
 
+    def test_submit_rejects_live_preview_without_target_paths(self):
+        payload = {
+            "task": "Create docs",
+            "project": "operator",
+            "delegation_mode": "live_codex_docs_only",
+            "preview": {
+                "project": "operator",
+                "pipeline_raw": "live_codex_docs_only",
+                "agent1": "codex",
+                "target_paths": [],
+            },
+        }
+
+        with app.test_client() as client, mock.patch("web.app.subprocess.run") as run:
+            response = client.post("/api/submit", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("requires explicit target_paths", response.get_json()["error"])
+        run.assert_not_called()
+
+    def test_submit_rejects_policy_file_preview_without_explicit_policy_target(self):
+        payload = {
+            "task": "Create a handbook mentioning policy",
+            "project": "operator",
+            "delegation_mode": "live_codex_policy_file_only",
+            "preview": {
+                "project": "operator",
+                "pipeline_raw": "live_codex_policy_file_only",
+                "agent1": "codex",
+                "target_paths": ["docs/operator-handbook/README.md"],
+            },
+        }
+
+        with app.test_client() as client, mock.patch("web.app.subprocess.run") as run:
+            response = client.post("/api/submit", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("app/policies.py", response.get_json()["error"])
+        run.assert_not_called()
+
     def test_submit_without_preview_keeps_legacy_do_path(self):
         completed = SimpleNamespace(returncode=0, stdout="task-456\n", stderr="")
         with app.test_client() as client, mock.patch("web.app.subprocess.run", return_value=completed) as run:

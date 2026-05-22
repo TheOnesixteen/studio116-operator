@@ -353,7 +353,12 @@ def _validate_lock_policy(value: Any, errors: list[str]) -> None:
 
 def _validate_policy_allowed_targets(policies: dict[str, Any], errors: list[str]) -> None:
     allowed_targets = {
-        LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION: {"README.md", "OPERATOR.md", "AGENTS.md"},
+        LIVE_CODEX_DOCS_ONLY_ALLOWED_TARGETS_SECTION: {
+            "README.md",
+            "OPERATOR.md",
+            "AGENTS.md",
+            "docs/operator-handbook/*.md",
+        },
         LIVE_CODEX_TESTS_ONLY_ALLOWED_TARGETS_SECTION: {"tests/test_*.py"},
         LIVE_CODEX_POLICY_FILE_ALLOWED_TARGETS_SECTION: {"app/policies.py", "app/project_registry.py"},
         LIVE_CODEX_MODEL_FILE_ALLOWED_TARGETS_SECTION: {"app/models.py", "app/project_registry.py"},

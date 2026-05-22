@@ -4,6 +4,7 @@ import json
 import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -770,6 +771,27 @@ def canonical_repo_path_for_task(task: dict[str, Any]) -> Path:
 
 def _changed_files_from_result(result) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _changed_files_within_requested_targets(changed_files: list[str], requested_targets: list[str]) -> dict:
+    def _matches_requested(path: str) -> bool:
+        for target in requested_targets:
+            if target.endswith("/") and path.startswith(target):
+                return True
+            if fnmatchcase(path, target):
+                return True
+        return False
+
+    outside = [path for path in changed_files if not _matches_requested(path)]
+    return {
+        "name": "changed_files_within_requested_target_paths",
+        "passed": not outside,
+        "details": {
+            "changed_files": changed_files,
+            "requested_target_paths": requested_targets,
+            "outside_requested_target_paths": outside,
+        },
+    }
 
 
 def _live_codex_mode_for_task(task: dict[str, Any]) -> str:
@@ -1985,6 +2007,7 @@ def _run_live_codex_policy_task(task: dict[str, Any], run_id: str, *, mode: str)
         project=task["project"],
         worker=worker or "",
     )
+    post_run_checks.append(_changed_files_within_requested_targets(changed_files, target_paths))
     post_run_checks.append(
         {
             "name": "codex_produced_changes",

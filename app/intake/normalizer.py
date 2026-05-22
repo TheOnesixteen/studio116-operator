@@ -91,6 +91,8 @@ def _infer_delegation_mode(task_type: str, goal_lower: str) -> str:
     """Infer delegation mode from task type and goal keywords."""
     if task_type in {"health_check", "review", "planning"}:
         return "dry_run"
+    if _has_explicit_docs_intent(goal_lower):
+        return "live_codex_docs_only"
     if "test" in goal_lower:
         return "live_codex_tests_only"
     if "model" in goal_lower or "models.py" in goal_lower:
@@ -100,6 +102,48 @@ def _infer_delegation_mode(task_type: str, goal_lower: str) -> str:
     if any(kw in goal_lower for kw in ("doc", "readme", "changelog", "operator.md")):
         return "live_codex_docs_only"
     return "dry_run"
+
+
+def _has_explicit_docs_intent(goal_lower: str) -> bool:
+    return any(
+        marker in goal_lower
+        for marker in (
+            "docs/",
+            "docs-only",
+            "documentation",
+            "handbook",
+            "manual",
+            "readme",
+            "operator.md",
+            ".md",
+            "docs/operator-handbook/",
+        )
+    )
+
+
+def _infer_local_target_paths(raw_goal: str, delegation_mode: str) -> list[str]:
+    if delegation_mode != "live_codex_docs_only":
+        return []
+
+    paths: list[str] = []
+    handbook_match = re.search(r"docs/operator-handbook/?", raw_goal, flags=re.IGNORECASE)
+    for match in re.findall(r"(?<![\w./-])([A-Za-z0-9_./-]+\.md)\b", raw_goal):
+        path = match.strip().lstrip("./")
+        if handbook_match and "/" not in path:
+            continue
+        if path and path not in paths:
+            paths.append(path)
+
+    if handbook_match:
+        handbook_prefix = "docs/operator-handbook/"
+        for match in re.findall(r"(?m)^\s*-\s*([A-Za-z0-9_.-]+\.md)\s*$", raw_goal):
+            path = handbook_prefix + match.strip()
+            if path not in paths:
+                paths.append(path)
+        if not paths:
+            paths.append(handbook_prefix + "README.md")
+
+    return paths
 
 
 def _compute_local_confidence(raw_goal: str, project: str | None) -> float:
@@ -151,6 +195,7 @@ def _normalize_local(
     task_type = _infer_task_type(goal_lower)
     agent = agent_override or _infer_agent(task_type, goal_lower)
     delegation_mode = _infer_delegation_mode(task_type, goal_lower)
+    target_paths = _infer_local_target_paths(raw_goal, delegation_mode)
 
     write_intent = task_type == "delegated" and delegation_mode != "dry_run"
     read_only = not write_intent
@@ -179,7 +224,7 @@ def _normalize_local(
         agent=agent,
         delegation_mode=delegation_mode,
         scope=scope,
-        target_paths=[],
+        target_paths=target_paths,
         blocked_paths=blocked_paths,
         origin_directory=os.path.realpath(origin_dir),
         steps=steps,

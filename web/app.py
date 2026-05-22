@@ -18,6 +18,15 @@ ARTIFACTS_DIR = os.path.join(RUNTIME_DIR, "artifacts")
 
 OPERATOR = "./scripts/operator"
 TIMEOUT = 60
+LIVE_WRITABLE_MODES = {
+    "live_codex_docs_only",
+    "live_codex_tests_only",
+    "live_codex_policy_file_only",
+    "live_codex_model_file_only",
+    "live_codex_scaffold_only",
+    "sequential_pipeline",
+}
+PREVIEW_POLICY_FILE_TARGETS = {"app/policies.py"}
 
 
 def _db():
@@ -444,6 +453,19 @@ def submit():
     if pipeline_raw:
         project_slug = (preview.get("project") or project or "operator").strip()
         target_paths = preview.get("target_paths") if isinstance(preview.get("target_paths"), list) else []
+        target_paths = [p.strip() for p in target_paths if isinstance(p, str) and p.strip()]
+        if pipeline_raw in LIVE_WRITABLE_MODES and not target_paths:
+            return jsonify({
+                "ok": False,
+                "error": "live writable preview requires explicit target_paths; refusing CLI defaults",
+            }), 400
+        if pipeline_raw == "live_codex_policy_file_only" and (
+            not target_paths or any(path not in PREVIEW_POLICY_FILE_TARGETS for path in target_paths)
+        ):
+            return jsonify({
+                "ok": False,
+                "error": "live_codex_policy_file_only requires explicit app/policies.py target path",
+            }), 400
         worker = preview.get("agent1") if pipeline_raw == "dry_run" else "codex"
         if worker not in {"codex", "claude_code", "gemini_cli"}:
             return jsonify({"ok": False, "error": f"unsupported preview worker: {worker}"}), 400
@@ -465,8 +487,7 @@ def submit():
             pipeline_raw,
         ]
         for target_path in target_paths:
-            if isinstance(target_path, str) and target_path.strip():
-                cmd += ["--target-path", target_path.strip()]
+            cmd += ["--target-path", target_path]
         return run(cmd)
     cmd = [OPERATOR, "do", task, "--yes"]
     if project and project not in ("auto", "scratchpad", ""):

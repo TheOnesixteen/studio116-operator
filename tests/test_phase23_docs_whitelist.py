@@ -81,7 +81,7 @@ class Phase23DocsWhitelistTests(unittest.TestCase):
     def test_whitelist_loads_from_registry_policies_yaml(self):
         self.assertEqual(
             set(live_codex_docs_only_allowed_targets()),
-            {"README.md", "OPERATOR.md", "AGENTS.md"},
+            {"README.md", "OPERATOR.md", "AGENTS.md", "docs/operator-handbook/*.md"},
         )
 
     def test_preflight_passes_for_readme_operator_and_agents_targets(self):
