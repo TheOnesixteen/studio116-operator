@@ -8,6 +8,8 @@ Phase 2.2 closes the proven live Codex docs-only review-and-approval loop for th
 
 Phase 2.3 keeps the same live Codex review loop and replaces the hardcoded `README.md` target with a policy-backed docs whitelist. The active whitelist lives in `registry/policies.yaml` and allows `README.md`, `OPERATOR.md`, and `AGENTS.md`.
 
+The Operator Queue It preview system turns a reviewed web intake preview into a queued delegated task. For sequential pipeline previews, it records the selected project, target paths, and planner/implementer roles, then queues the work for the scheduler while preserving the approval boundary before any canonical checkout changes.
+
 `OPERATOR.md` is the master source of truth. `AGENTS.md` rules apply here: never auto-deploy, never expose secrets, use SQLite locks only, and keep the scheduler responsible for lock lifecycle.
 
 ## Scope
